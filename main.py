@@ -6,6 +6,7 @@ from systems import (
 )
 from entities import Player, PositionComponent, InventoryComponent, HealthComponent, Boss
 
+
 # ============================================================
 #                     INITIALIZATION
 # ============================================================
@@ -15,18 +16,22 @@ print("🌒 Initializing Ashes of Verdance...")
 # Build the world
 world = build_world()
 
+from config import STARTING_POTIONS, HEALTH_POTION_HEAL
+
 # Create and place player
 player = Player("Ashen Wanderer")
 player.add_component(PositionComponent(player, x=0, y=0))
+
 # Give starting items
 inv = player.get_component(InventoryComponent)
 if inv:
-    inv.add_item({"name": "Health Potion", "type": "consumable", "heal": 30})
-    inv.add_item({"name": "Health Potion", "type": "consumable", "heal": 30})
-    inv.add_item({"name": "Health Potion", "type": "consumable", "heal": 30})
+    for _ in range(STARTING_POTIONS):
+        inv.add_item({"name": "Health Potion", "type": "consumable", "heal": HEALTH_POTION_HEAL})
+
 player_start_biome = world.get_biome("Sacred Wilds")
 player_start_biome.add_entity(player)
 world.players.append(player)
+
 
 # ============================================================
 #                     SYSTEM SETUP
@@ -39,6 +44,7 @@ inventory_system = InventorySystem(world)
 combat_system = CombatSystem(world)
 ai_controller = AIController(world)
 ai_controller.combat_system = combat_system  # Link combat system to AI
+
 
 # ============================================================
 #                     QUEST SETUP
@@ -67,6 +73,7 @@ starting_quest = Quest(
     reward_callback=reward_first_quest
 )
 quest_system.add_quest(starting_quest)
+
 
 # ============================================================
 #                     HELPER FUNCTIONS
@@ -149,6 +156,7 @@ def show_menu():
     print("  travel - Move to another biome")
     print("  quit - Exit game")
     print("================\n")
+
 
 # ============================================================
 #                     MAIN GAME LOOP

@@ -14,10 +14,12 @@ import random
 #                    BUILD FULL WORLD
 # ==========================================================
 
-def build_world():
-    world = World()  # Use the World from core_engine
+from config import (BOSS_1_HP, BOSS_2_HP, BOSS_3_HP, BOSS_4_HP, BOSS_5_HP,
+                    PLAYER_START_ATTACK, PLAYER_START_DEFENSE, BOSS_ATTACK_MULTIPLIER, BOSS_DEFENSE_MULTIPLIER)
 
-    # --- Create Biomes ---
+def build_world():
+    world = World()
+    # --- BIOMES ---
     sacred_wilds = Biome(
         name="Sacred Wilds",
         biome_type="Nature",
@@ -53,124 +55,103 @@ def build_world():
         danger_level=6
     )
 
+    # Add biomes to world
     world.add_biome(sacred_wilds)
     world.add_biome(drowned_vale)
     world.add_biome(molten_crypt)
     world.add_biome(frostspire)
     world.add_biome(cathedral_ruins)
 
-    # --- Regular NPCs ---
-    forest_spirit = NPC("Forest Spirit", dialogue_lines=[
-        "Greetings, child of the Verdant Flame.",
-        "The roots remember... even if you have forgotten."
-    ])
-    forest_spirit.add_component(PositionComponent(forest_spirit, x=2, y=3))
-    sacred_wilds.add_entity(forest_spirit)
-
-    elven_scout = NPC("Elven Scout", dialogue_lines=[
-        "Tread lightly, wanderer.",
-        "Not all who linger here are kind."
-    ])
-    elven_scout.add_component(PositionComponent(elven_scout, x=5, y=2))
-    sacred_wilds.add_entity(elven_scout)
-
-    # --- Regular Enemies ---
-    corrupted_wolf = Creature("Corrupted Wolf", max_hp=40.0)
-    corrupted_wolf.add_component(StatsComponent(corrupted_wolf, attack=8, defense=3))
-    corrupted_wolf.add_component(PositionComponent(corrupted_wolf, x=3, y=4))
-    corrupted_wolf.xp_reward = 15
-    corrupted_wolf.loot_item = {"name": "Wolf Fang", "type": "material"}
-    sacred_wilds.add_entity(corrupted_wolf)
-
-    # --- Bosses ---
+    
+    # --- BOSS 1: Elder Barkwatcher (Sacred Wilds) ---
     elder_barkwatcher_dialogue = {
         "intro": "You dare disturb the slumber of roots eternal?",
         "hurt": "The forest... resists!",
-        "death": "The forest shall reclaim your flesh!"
+        "death": "The roots... will remember..."
     }
     elder_barkwatcher_drop = {"name": "Ancient Bark Charm", "type": "progression", "power": 1}
     
     elder_barkwatcher = Boss(
         name="Elder Barkwatcher",
         biome="Sacred Wilds",
-        hp=150.0,  # Reduced from 180
-        attack=13.0,  # Reduced from 15
-        defense=5.0,  # Reduced from 6
+        hp=BOSS_1_HP,
+        attack=PLAYER_START_ATTACK * BOSS_ATTACK_MULTIPLIER,
+        defense=PLAYER_START_DEFENSE * BOSS_DEFENSE_MULTIPLIER,
         drop_item=elder_barkwatcher_drop,
         dialogue=elder_barkwatcher_dialogue,
         phases=2
-)
+    )
     elder_barkwatcher.add_component(PositionComponent(elder_barkwatcher, x=10, y=10))
-    elder_barkwatcher.xp_reward = 50
+    elder_barkwatcher.xp_reward = 30
     sacred_wilds.add_entity(elder_barkwatcher)
 
-    # Drowned Matron
+    # --- BOSS 2: Drowned Matron (Drowned Vale) ---
     drowned_matron_dialogue = {
         "intro": "Beneath the still water, all voices are silenced.",
         "hurt": "The depths... call to me...",
-        "death": "Join us... in the deep."
+        "death": "Join us... in the deep..."
     }
     drowned_matron_drop = {"name": "Pearl of the Abyss", "type": "progression", "power": 2}
     
     drowned_matron = Boss(
         name="Drowned Matron",
         biome="Drowned Vale",
-        hp=220.0,
-        attack=18.0,
-        defense=8.0,
+        hp=BOSS_2_HP,
+        attack=PLAYER_START_ATTACK * BOSS_ATTACK_MULTIPLIER * 1.1,  # Slightly harder
+        defense=PLAYER_START_DEFENSE * BOSS_DEFENSE_MULTIPLIER,
         drop_item=drowned_matron_drop,
         dialogue=drowned_matron_dialogue,
         phases=2
     )
     drowned_matron.add_component(PositionComponent(drowned_matron, x=15, y=8))
-    drowned_matron.xp_reward = 75
+    drowned_matron.xp_reward = 40
     drowned_vale.add_entity(drowned_matron)
 
-    # Ember Colossus
+    # --- BOSS 3: Ember Colossus (Molten Crypt) ---
     ember_colossus_dialogue = {
         "intro": "The flames remember your trespass.",
         "hurt": "Ashes... to ashes...",
-        "death": "You shall burn as they did!"
+        "death": "The embers... fade..."
     }
     ember_colossus_drop = {"name": "Heart of Cinders", "type": "progression", "power": 3}
     
     ember_colossus = Boss(
         name="Ember Colossus",
         biome="Molten Crypt",
-        hp=250.0,
-        attack=22.0,
-        defense=10.0,
+        hp=BOSS_3_HP,
+        attack=PLAYER_START_ATTACK * BOSS_ATTACK_MULTIPLIER * 1.2,
+        defense=PLAYER_START_DEFENSE * BOSS_DEFENSE_MULTIPLIER * 1.2,
         drop_item=ember_colossus_drop,
         dialogue=ember_colossus_dialogue,
-        phases=3
+        phases=2
     )
     ember_colossus.add_component(PositionComponent(ember_colossus, x=20, y=12))
-    ember_colossus.xp_reward = 90
+    ember_colossus.xp_reward = 50
     molten_crypt.add_entity(ember_colossus)
 
-    # Frostbound Tyrant
+    # --- BOSS 4: Frostbound Tyrant (Frostspire Peaks) ---
     frostbound_tyrant_dialogue = {
         "intro": "Cold preserves all. Even your fear.",
         "hurt": "Ice... cracks...",
-        "death": "Shatter before my gaze!"
+        "death": "The frost... melts..."
     }
     frostbound_tyrant_drop = {"name": "Frozen Crown", "type": "progression", "power": 4}
     
     frostbound_tyrant = Boss(
         name="Frostbound Tyrant",
         biome="Frostspire Peaks",
-        hp=300.0,
-        attack=26.0,
-        defense=12.0,
+        hp=BOSS_4_HP,
+        attack=PLAYER_START_ATTACK * BOSS_ATTACK_MULTIPLIER * 1.3,
+        defense=PLAYER_START_DEFENSE * BOSS_DEFENSE_MULTIPLIER * 1.3,
         drop_item=frostbound_tyrant_drop,
         dialogue=frostbound_tyrant_dialogue,
         phases=3
     )
     frostbound_tyrant.add_component(PositionComponent(frostbound_tyrant, x=25, y=15))
-    frostbound_tyrant.xp_reward = 120
+    frostbound_tyrant.xp_reward = 60
     frostspire.add_entity(frostbound_tyrant)
 
-    # Final Boss - Archon of Decay
+    # --- BOSS 5: Archon of Decay (FINAL BOSS) ---
     final_boss_dialogue = {
         "intro": "Ah, the child of life returns... Do you think peace can bloom from rot?",
         "hurt": "Your persistence... annoys me!",
@@ -181,15 +162,15 @@ def build_world():
     final_boss = Boss(
         name="Archon of Decay",
         biome="Cathedral of Ash",
-        hp=400.0,
-        attack=35.0,
-        defense=15.0,
+        hp=BOSS_5_HP,
+        attack=PLAYER_START_ATTACK * BOSS_ATTACK_MULTIPLIER * 1.5,
+        defense=PLAYER_START_DEFENSE * BOSS_DEFENSE_MULTIPLIER * 1.5,
         drop_item=final_boss_drop,
         dialogue=final_boss_dialogue,
         phases=4
     )
     final_boss.add_component(PositionComponent(final_boss, x=30, y=20))
-    final_boss.xp_reward = 200
+    final_boss.xp_reward = 100
     cathedral_ruins.add_entity(final_boss)
 
     return world

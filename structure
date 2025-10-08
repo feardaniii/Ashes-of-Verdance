@@ -30,7 +30,7 @@ Once placed within the Father Tree, the world will be restored to its shiny glor
 
 # entities.p -> Characters, NPCs, bosses (ECS (Entity Component System) pattern -> an approach for game development)
 
-# systems.py -> Combat, inventory, travel, quests, AI)
+# systems.py -> Combat, inventory, travel, quests, AI
 
 # world_setup.py -> Content creation (biomes, bosses, NPCs)
 

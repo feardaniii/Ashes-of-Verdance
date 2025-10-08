@@ -240,6 +240,8 @@ import sys
 from entities import (BaseEntity, AliveEntity, Player, NPC, Creature, Boss, 
                       InventoryComponent, AIComponent, HealthComponent, 
                       StatsComponent, PositionComponent)  # Add PositionComponent
+from config import ATTACK_COOLDOWN, DEFEND_DURATION, MIN_DAMAGE, DEFEND_MULTIPLIER
+from config import XP_PER_LEVEL, LEVEL_HP_GAIN, LEVEL_ATTACK_GAIN, LEVEL_DEFENSE_GAIN
 
 def slow_print(text, delay=0.03, newline=True):
     """Print text with a cinematic typewriter effect."""
@@ -253,10 +255,10 @@ def slow_print(text, delay=0.03, newline=True):
 class CombatSystem:
     def __init__(self, world):
         self.world = world
-        self.attack_cooldowns = {}  # entity.id -> time until next attack
-        self.defend_cooldowns = {}  # entity.id -> time until defense expires
-        self.active_combats = []    # list of (attacker, defender) tuples
-        self.default_cooldown = 2.0  # seconds between attacks
+        self.attack_cooldowns = {}
+        self.defend_cooldowns = {}
+        self.active_combats = []
+        self.default_cooldown = ATTACK_COOLDOWN  # Use config value
 
     def update(self, delta_time: float):
         """Called every game tick to process ongoing combat."""
@@ -271,32 +273,25 @@ class CombatSystem:
         return entity.id not in self.attack_cooldowns
 
     def attack(self, attacker, target, damage: float = None):
-        """Execute an attack if cooldown allows."""
         if not self.can_attack(attacker):
             return False
 
-        # Calculate damage
         attacker_stats = attacker.get_component(StatsComponent)
         target_stats = target.get_component(StatsComponent)
         
         if not damage and attacker_stats:
             base_defense = target_stats.defense if target_stats else 0
-            # Double defense if target is defending
             if self.is_defending(target):
-                base_defense *= 2
+                base_defense *= DEFEND_MULTIPLIER  # Use config value
                 print(f"[Combat] {target.name}'s defense blocked extra damage!")
             
-            damage = max(5, attacker_stats.attack - base_defense)
+            damage = max(MIN_DAMAGE, attacker_stats.attack - base_defense)  # Use config value
         
-        # Apply damage
         target_health = target.get_component(HealthComponent)
         if target_health:
             target_health.take_damage(damage, source=attacker)
-            
-            # Set cooldown
             self.attack_cooldowns[attacker.id] = self.default_cooldown
             
-            # Check if target died
             if not target_health.alive:
                 self.end_combat(attacker, target)
                 if hasattr(attacker, 'in_combat_with') and target in attacker.in_combat_with:
@@ -318,29 +313,39 @@ class CombatSystem:
         if isinstance(winner, Player):
             self.on_enemy_defeated(winner, loser)
 
-        def on_enemy_defeated(self, player, enemy):
-            """Handle loot, XP gain, quest progression."""
-            xp_gain = getattr(enemy, "xp_reward", 20)
+    def on_enemy_defeated(self, player, enemy):
+        """Handle loot, XP gain, quest progression."""
+        xp_gain = getattr(enemy, "xp_reward", 20)
+        
+        print(f"[Combat] +{xp_gain} XP gained!")
+        player.xp += xp_gain
+
+        # Check for boss drops
+        if isinstance(enemy, Boss) and enemy.drop_item:
+            inv = player.get_component(InventoryComponent)
+            if inv:
+                inv.add_item(enemy.drop_item)
+
+        # Level-up logic (now at 50 XP instead of 100)
+        if player.xp >= XP_PER_LEVEL:
+            player.level += 1
+            player.xp -= XP_PER_LEVEL  # Carry over excess XP
             
-            print(f"[Combat] +{xp_gain} XP gained!")
-            player.xp += xp_gain
-
-            # Check for boss drops
-            if isinstance(enemy, Boss) and enemy.drop_item:
-                inv = player.get_component(InventoryComponent)
-                if inv:
-                    inv.add_item(enemy.drop_item)
-
-            # Level-up logic
-            if player.xp >= 100:
-                player.level += 1
-                player.xp = 0
-                player_stats = player.get_component(StatsComponent)
-                if player_stats:
-                    player_stats.attack += 2
-                    player_stats.defense += 1
-                print(f"[Level Up] {player.name} reached level {player.level}!")
-
+            # Increase stats
+            player_health = player.get_component(HealthComponent)
+            player_stats = player.get_component(StatsComponent)
+            
+            if player_health:
+                player_health.max_hp += LEVEL_HP_GAIN
+                player_health.hp = player_health.max_hp  # Full heal on level up
+            
+            if player_stats:
+                player_stats.attack += LEVEL_ATTACK_GAIN
+                player_stats.defense += LEVEL_DEFENSE_GAIN
+            
+            print(f"[Level Up] 🌟 {player.name} reached level {player.level}!")
+            print(f"  HP: +{LEVEL_HP_GAIN} | ATK: +{LEVEL_ATTACK_GAIN} | DEF: +{LEVEL_DEFENSE_GAIN}")
+    
     def auto_combat_nearby(self, entity, radius: float = 5.0):
         """
         Automatically attack nearby enemies if cooldown allows.
@@ -427,8 +432,8 @@ class CombatSystem:
                 self.attack(enemy, entity)
 
     def defend(self, entity):
-        """Entity takes defensive stance, reducing incoming damage."""
-        self.defend_cooldowns[entity.id] = 3.0  # 3 seconds of defense
+        """Entity takes defensive stance."""
+        self.defend_cooldowns[entity.id] = DEFEND_DURATION  # Use config value
         print(f"[Combat] {entity.name} takes a defensive stance!")
         return True
 

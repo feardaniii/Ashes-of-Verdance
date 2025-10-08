@@ -310,14 +310,20 @@ class AliveEntity(BaseEntity):
         print(f"[{self.name}] leaves behind a decaying form.")
 
 
+from config import (PLAYER_START_HP, PLAYER_START_ATTACK, PLAYER_START_DEFENSE,
+                    PLAYER_START_STAMINA, STARTING_POTIONS)
 class Player(AliveEntity):
     def __init__(self, name: str):
-        super().__init__(name, max_hp=150.0)
+        super().__init__(name, max_hp=PLAYER_START_HP)
         self.xp = 0
         self.level = 1
-        # Add components
         self.add_component(InventoryComponent(self, capacity=30))
-        self.add_component(StatsComponent(self, attack=15.0, defense=5.0, stamina=120.0))
+        self.add_component(StatsComponent(
+            self,
+            attack=PLAYER_START_ATTACK,
+            defense=PLAYER_START_DEFENSE,
+            stamina=PLAYER_START_STAMINA   
+        ))
 
     def on_death(self, killer: Optional["BaseEntity"] = None):
         print(f"💀 {self.name} fell in battle... (player death logic placeholder)")
