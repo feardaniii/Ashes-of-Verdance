@@ -120,7 +120,7 @@ class QuestSystem(GameSystem):
         self.completed_quests = []
 
     def add_quest(self, quest):
-        print(f"[QuestSystem] 📜 New quest added: {quest.title}")
+        print(f"\n[QuestSystem] 📜 New quest added: {quest.title}")
         self.active_quests.append(quest)
 
     def complete_quest(self, quest):
