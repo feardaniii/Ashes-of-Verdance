@@ -69,6 +69,7 @@ player_start_biome.add_entity(player)
 world.players.append(player)
 
 player.discovered_biomes = {player.biome.name}
+player.defeated_bosses = []
 
 
 # ============================================================
@@ -120,6 +121,28 @@ quest_system.add_quest(starting_quest)
 # ============================================================
 #                     HELPER FUNCTIONS
 # ============================================================
+
+BIOME_UNLOCK_REQUIREMENTS = {
+    "Sacred Wilds": [],
+    "Drowned Vale": ["Elder Barkwatcher"],
+    "Molten Crypt": ["Drowned Matron"],
+    "Frostspire Peaks": ["Drowned Matron"],
+    "Cathedral of Ash": [
+        "Elder Barkwatcher",
+        "Drowned Matron",
+        "Ember Colossus",
+        "Frostbound Tyrant",
+    ],
+}
+
+def get_missing_bosses_for_biome(biome):
+    """Return required bosses not yet defeated for a biome."""
+    required_bosses = BIOME_UNLOCK_REQUIREMENTS.get(biome.name, [])
+    return [boss_name for boss_name in required_bosses if boss_name not in player.defeated_bosses]
+
+def can_enter_biome(biome):
+    """Return True if biome is unlocked by boss progression."""
+    return len(get_missing_bosses_for_biome(biome)) == 0
 
 def show_inventory():
     """Display player inventory."""
@@ -250,12 +273,15 @@ def show_travel_menu():
     
     available_biomes = []
     for i, (name, biome) in enumerate(world.biomes.items(), 1):
-        if biome.name in player.discovered_biomes:
-            table.add_row(str(i), biome.name, f"[green]Danger: {biome.danger_level}[/green]")
-            available_biomes.append(biome)
+        if can_enter_biome(biome):
+            discovered_tag = "[dim] (Visited)[/dim]" if biome.name in player.discovered_biomes else ""
+            table.add_row(str(i), biome.name, f"[green]Danger: {biome.danger_level}[/green]{discovered_tag}")
+            available_biomes.append({"biome": biome, "locked": False, "missing": []})
         else:
-            table.add_row(str(i), "???", "[dim]Undiscovered[/dim]")
-            available_biomes.append(None)  # Placeholder
+            missing_bosses = get_missing_bosses_for_biome(biome)
+            lock_reason = " & ".join(missing_bosses)
+            table.add_row(str(i), f"🔒 {biome.name}", f"[red]Locked[/red] - Defeat {lock_reason}")
+            available_biomes.append({"biome": biome, "locked": True, "missing": missing_bosses})
     
     console.print(table)
     console.print("\n[dim]Enter biome number to travel (or 0 to cancel):[/dim]")
@@ -267,7 +293,13 @@ def show_travel_menu():
             time.sleep(0.3)
             return
         if 1 <= choice <= len(available_biomes):
-            travel_to_biome(available_biomes[choice - 1])
+            selected = available_biomes[choice - 1]
+            if selected["locked"]:
+                boss_text = " and ".join(selected["missing"])
+                console.print(f"\n[red]🔒 Defeat {boss_text} to unlock this area.[/red]")
+                time.sleep(0.5)
+                return
+            travel_to_biome(selected["biome"])
         else:
             console.print("[red]Invalid choice.[/red]")
             time.sleep(0.3)
@@ -277,9 +309,15 @@ def show_travel_menu():
 
 def travel_to_biome(new_biome):
     """Move player to a different biome."""
-    # Check if biome is locked (undiscovered)
     if new_biome is None:
-        console.print("\n[red]🔒 This area is shrouded in mystery. You cannot travel there yet.[/red]")
+        console.print("\n[red]🔒 Invalid destination.[/red]")
+        time.sleep(0.5)
+        return
+
+    if not can_enter_biome(new_biome):
+        missing_bosses = get_missing_bosses_for_biome(new_biome)
+        boss_text = " and ".join(missing_bosses)
+        console.print(f"\n[red]🔒 Defeat {boss_text} to unlock this area.[/red]")
         time.sleep(0.5)
         return
     
@@ -464,6 +502,22 @@ def main_loop():
                     console.print()
                     typewriter(f'"{enemy.dialogue["death"]}"', delay=0.035, color="dim red")
                     time.sleep(1.0)
+
+                if isinstance(enemy, Boss) and enemy.name not in player.defeated_bosses:
+                    previously_locked = {
+                        biome.name
+                        for biome in world.biomes.values()
+                        if not can_enter_biome(biome)
+                    }
+                    player.defeated_bosses.append(enemy.name)
+                    newly_unlocked = [
+                        biome.name
+                        for biome in world.biomes.values()
+                        if biome.name in previously_locked and can_enter_biome(biome)
+                    ]
+                    for biome_name in newly_unlocked:
+                        console.print(f"[bold green]🗺️ New area unlocked: {biome_name}[/bold green]")
+                        time.sleep(0.5)
                 
                 player.in_combat_with = []
         
