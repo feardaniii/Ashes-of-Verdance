@@ -8,10 +8,12 @@ This spec defines application bootstrap and runtime orchestration in `main.py`.
 
 1. Initialize world/session state
 - Build world via `build_world()`.
-- Create player, attach position, seed starting potions.
-- Place player in `Sacred Wilds`.
-- Track discovered biomes.
-- Track defeated bosses on player (`player.defeated_bosses`) for progression gating.
+- Initialize systems including `SaveSystem`.
+- Show startup main menu (`New Game`, `Load Game`, `Quit`).
+- Show startup main menu (`New Game`, `Load Game`, `Manage Saves`, `Quit`).
+- New Game path creates player, attaches position, seeds starting potions, places player in `Sacred Wilds`, and initializes discovered biomes/defeated bosses/playtime.
+- Load Game path reconstructs player state from save slot metadata and serialized component data.
+- Manage Saves path lists existing save slots and supports deleting a selected slot with explicit confirmation.
 
 2. Initialize systems
 - Event, dialogue, quest, inventory, combat, AI controller.
@@ -21,6 +23,7 @@ This spec defines application bootstrap and runtime orchestration in `main.py`.
 - `Verdant Rebirth` quest:
   - Objective: Elder Barkwatcher defeated.
   - Reward: Forest Blessing consumable.
+- Quest is only auto-registered for New Game sessions.
 
 ## UI/Interaction Model
 
@@ -29,7 +32,7 @@ This spec defines application bootstrap and runtime orchestration in `main.py`.
 
 2. Command modes
 - Exploration mode:
-  - `explore/e`, `inventory/i`, `quests/q`, `status/s`, `travel/t`, `help`, `quit/exit`
+  - `explore/e`, `inventory/i`, `use/u`, `quests/q`, `status/s`, `travel/t`, `save`, `help`, `quit/exit`
 - Combat mode:
   - `attack/a`, `defend/d`, `potion/p`, `run/r`
 
@@ -47,11 +50,17 @@ This spec defines application bootstrap and runtime orchestration in `main.py`.
 2. Combat gate
 - Input branch is based on player `in_combat_with` state.
 - On boss death, runtime records the boss name to `player.defeated_bosses` and emits area unlock notifications for newly available biomes.
+- After post-boss dialogue/updates, runtime triggers autosave to slot `autosave`.
 
 3. Termination paths
 - Player death.
 - User quit command.
 - Keyboard interrupt handler at module entrypoint.
+- Session playtime is accumulated on loop exit and persisted on next save.
+- User quit path prompts for confirmation and offers:
+  - Save and quit (writes to slot `autosave`)
+  - Quit without saving
+  - Cancel exit
 
 ## Dependencies
 
@@ -69,3 +78,4 @@ Biome travel availability is enforced at runtime with boss-based fog gates:
 - `Cathedral of Ash`: requires `Elder Barkwatcher`, `Drowned Matron`, `Ember Colossus`, and `Frostbound Tyrant`.
 
 Travel UI must show lock state and required boss/bosses, and locked selections are rejected with an explicit unlock requirement message.
+Selecting the current biome is treated as a no-op and should not trigger travel narration.

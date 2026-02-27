@@ -1,0 +1,47 @@
+{
+  "name": "Ashen Wanderer",
+  "level": 1,
+  "xp": 30,
+  "biome": "Sacred Wilds",
+  "discovered_biomes": [
+    "Sacred Wilds"
+  ],
+  "defeated_bosses": [
+    "Elder Barkwatcher"
+  ],
+  "playtime": 0,
+  "health": {
+    "hp": 65.0,
+    "max_hp": 100.0,
+    "alive": true
+  },
+  "stats": {
+    "attack": 15.0,
+    "defense": 5.0,
+    "stamina": 100.0,
+    "max_stamina": 100.0
+  },
+  "position": {
+    "x": 0,
+    "y": 0
+  },
+  "inventory": [
+    {
+      "name": "Health Potion",
+      "type": "consumable",
+      "heal": 40
+    },
+    {
+      "name": "Ancient Bark Charm",
+      "type": "progression",
+      "power": 1
+    },
+    {
+      "name": "Ancient Bark Charm",
+      "type": "progression",
+      "power": 1
+    }
+  ],
+  "timestamp": "2026-02-27T20:54:00.810902",
+  "world_time": 0
+}

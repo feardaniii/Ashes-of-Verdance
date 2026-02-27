@@ -15,7 +15,7 @@ import time
 from world_setup import build_world
 from systems import (
     EventSystem, DialogueSystem, QuestSystem,
-    InventorySystem, CombatSystem, AIController, Quest
+    InventorySystem, CombatSystem, AIController, Quest, SaveSystem
 )
 from entities import Player, PositionComponent, InventoryComponent, HealthComponent, Boss, Creature, NPC, StatsComponent
 
@@ -54,28 +54,6 @@ world = build_world()
 
 from config import STARTING_POTIONS, HEALTH_POTION_HEAL
 
-# Create and place player
-player = Player("Ashen Wanderer")
-player.add_component(PositionComponent(player, x=0, y=0))
-
-# Give starting items
-inv = player.get_component(InventoryComponent)
-if inv:
-    for _ in range(STARTING_POTIONS):
-        inv.add_item({"name": "Health Potion", "type": "consumable", "heal": HEALTH_POTION_HEAL})
-
-player_start_biome = world.get_biome("Sacred Wilds")
-player_start_biome.add_entity(player)
-world.players.append(player)
-
-player.discovered_biomes = {player.biome.name}
-player.defeated_bosses = []
-
-
-# ============================================================
-#                     SYSTEM SETUP
-# ============================================================
-
 event_system = EventSystem(world)
 dialogue_system = DialogueSystem(world)
 quest_system = QuestSystem(world)
@@ -83,6 +61,10 @@ inventory_system = InventorySystem(world)
 combat_system = CombatSystem(world)
 ai_controller = AIController(world)
 ai_controller.combat_system = combat_system  # Link combat system to AI
+save_system = SaveSystem()
+
+player = None
+is_new_game_session = False
 
 
 # ============================================================
@@ -109,13 +91,253 @@ def reward_first_quest(world):
     if inv:
         inv.add_item({"name": "Forest Blessing", "type": "consumable", "heal": 50})
 
-starting_quest = Quest(
-    title="Verdant Rebirth",
-    description="Defeat the Elder Barkwatcher in the Sacred Wilds.",
-    objective_check=check_elder_barkwatcher_defeated,
-    reward_callback=reward_first_quest
-)
-quest_system.add_quest(starting_quest)
+def setup_initial_quest():
+    starting_quest = Quest(
+        title="Verdant Rebirth",
+        description="Defeat the Elder Barkwatcher in the Sacred Wilds.",
+        objective_check=check_elder_barkwatcher_defeated,
+        reward_callback=reward_first_quest
+    )
+    quest_system.add_quest(starting_quest)
+
+
+def show_main_menu():
+    """Display main menu and return selected option."""
+    console.clear()
+    console.print("\n")
+    typewriter("ASHES OF VERDANCE", delay=0.05, color="bold cyan")
+    console.print()
+
+    menu = Table(title="[bold]Main Menu[/bold]", box=box.ROUNDED)
+    menu.add_column("Option", style="cyan", justify="center")
+    menu.add_column("Action", style="white")
+    menu.add_row("1", "New Game")
+    menu.add_row("2", "Load Game")
+    menu.add_row("3", "Manage Saves")
+    menu.add_row("4", "Quit")
+    console.print(menu)
+
+    return Prompt.ask("Choose", choices=["1", "2", "3", "4"], show_choices=False).strip()
+
+
+def show_load_menu():
+    """Display available save slots and return selected slot name."""
+    saves = save_system.list_saves()
+    if not saves:
+        console.print("[yellow]No save files found.[/yellow]")
+        time.sleep(0.6)
+        return None
+
+    table = Table(title="[bold]Load Game[/bold]", box=box.ROUNDED)
+    table.add_column("No.", style="cyan", justify="center")
+    table.add_column("Slot", style="magenta")
+    table.add_column("Character", style="white")
+    table.add_column("Level", style="yellow", justify="center")
+    table.add_column("Location", style="green")
+    table.add_column("Last Played", style="dim")
+
+    for i, save in enumerate(saves, 1):
+        timestamp = str(save.get("timestamp", "Unknown")).replace("T", " ")
+        table.add_row(
+            str(i),
+            str(save.get("slot", "unknown")),
+            str(save.get("name", "Unknown")),
+            str(save.get("level", 1)),
+            str(save.get("biome", "Unknown")),
+            timestamp,
+        )
+
+    console.print(table)
+    console.print("[dim]Select a save number (0 to cancel).[/dim]")
+    selection = IntPrompt.ask(">", default=0)
+
+    if selection == 0:
+        return None
+    if 1 <= selection <= len(saves):
+        return saves[selection - 1]["slot"]
+
+    console.print("[red]Invalid selection.[/red]")
+    time.sleep(0.5)
+    return None
+
+
+def show_manage_saves_menu():
+    """List saves and allow deleting selected slots."""
+    while True:
+        saves = save_system.list_saves()
+        console.clear()
+        console.print("\n[bold cyan]Manage Saves[/bold cyan]\n")
+
+        if not saves:
+            console.print("[yellow]No save files found.[/yellow]")
+            console.print("[dim]Press Enter to go back.[/dim]")
+            Prompt.ask(">", default="")
+            return
+
+        table = Table(title="[bold]Saved Games[/bold]", box=box.ROUNDED)
+        table.add_column("No.", style="cyan", justify="center")
+        table.add_column("Slot", style="magenta")
+        table.add_column("Character", style="white")
+        table.add_column("Level", style="yellow", justify="center")
+        table.add_column("Location", style="green")
+        table.add_column("Last Played", style="dim")
+
+        for i, save in enumerate(saves, 1):
+            timestamp = str(save.get("timestamp", "Unknown")).replace("T", " ")
+            table.add_row(
+                str(i),
+                str(save.get("slot", "unknown")),
+                str(save.get("name", "Unknown")),
+                str(save.get("level", 1)),
+                str(save.get("biome", "Unknown")),
+                timestamp,
+            )
+
+        console.print(table)
+        console.print("[dim]Enter save number to delete, or 0 to return.[/dim]")
+        selection = IntPrompt.ask(">", default=0)
+
+        if selection == 0:
+            return
+        if not (1 <= selection <= len(saves)):
+            console.print("[red]Invalid selection.[/red]")
+            time.sleep(0.6)
+            continue
+
+        chosen = saves[selection - 1]
+        slot = chosen.get("slot", "")
+        console.print(f"[yellow]Delete save slot '{slot}'? This cannot be undone.[/yellow]")
+        confirm = Prompt.ask("Type 'delete' to confirm, or press Enter to cancel", default="").strip().lower()
+        if confirm != "delete":
+            console.print("[dim]Deletion canceled.[/dim]")
+            time.sleep(0.6)
+            continue
+
+        success, message = save_system.delete_save(slot)
+        if success:
+            console.print(f"[bold green]{message}[/bold green]")
+        else:
+            console.print(f"[bold red]{message}[/bold red]")
+        time.sleep(0.8)
+
+
+def start_new_game():
+    """Create a fresh player and place them in Sacred Wilds."""
+    new_player = Player("Ashen Wanderer")
+    new_player.add_component(PositionComponent(new_player, x=0, y=0))
+    new_player.defeated_bosses = []
+    new_player.playtime = 0
+
+    start_biome = world.get_biome("Sacred Wilds")
+    if start_biome:
+        start_biome.add_entity(new_player)
+    if new_player not in world.players:
+        world.players.append(new_player)
+
+    new_player.discovered_biomes = {new_player.biome.name} if getattr(new_player, "biome", None) else set()
+
+    inv = new_player.get_component(InventoryComponent)
+    if inv:
+        for _ in range(STARTING_POTIONS):
+            inv.add_item({"name": "Health Potion", "type": "consumable", "heal": HEALTH_POTION_HEAL})
+
+    return new_player
+
+
+def load_player_from_save(save_data, world):
+    """Reconstruct a player object from save data and add it to the world."""
+    try:
+        loaded_player = Player(save_data.get("name", "Ashen Wanderer"))
+        loaded_player.level = save_data.get("level", 1)
+        loaded_player.xp = save_data.get("xp", 0)
+        loaded_player.defeated_bosses = save_data.get("defeated_bosses", [])
+        loaded_player.discovered_biomes = set(save_data.get("discovered_biomes", []))
+        loaded_player.playtime = save_data.get("playtime", 0)
+
+        health = loaded_player.get_component(HealthComponent)
+        health_data = save_data.get("health", {})
+        if health:
+            health.max_hp = health_data.get("max_hp", health.max_hp)
+            health.hp = health_data.get("hp", health.hp)
+            health.alive = health_data.get("alive", True)
+
+        stats = loaded_player.get_component(StatsComponent)
+        stats_data = save_data.get("stats", {})
+        if stats:
+            stats.attack = stats_data.get("attack", stats.attack)
+            stats.defense = stats_data.get("defense", stats.defense)
+            stats.stamina = stats_data.get("stamina", stats.stamina)
+            stats.max_stamina = stats_data.get("max_stamina", stats.max_stamina)
+
+        pos_data = save_data.get("position", {})
+        position = loaded_player.get_component(PositionComponent)
+        if not position:
+            loaded_player.add_component(PositionComponent(loaded_player, x=0, y=0))
+            position = loaded_player.get_component(PositionComponent)
+        if position:
+            position.x = pos_data.get("x", 0)
+            position.y = pos_data.get("y", 0)
+
+        inventory = loaded_player.get_component(InventoryComponent)
+        if inventory:
+            inventory.items = list(save_data.get("inventory", []))
+
+        biome_name = save_data.get("biome", "Sacred Wilds")
+        biome = world.get_biome(biome_name) or world.get_biome("Sacred Wilds")
+        if biome:
+            biome.add_entity(loaded_player)
+            if biome.name and biome.name not in loaded_player.discovered_biomes:
+                loaded_player.discovered_biomes.add(biome.name)
+
+        if loaded_player not in world.players:
+            world.players.append(loaded_player)
+
+        return loaded_player
+    except Exception as exc:
+        console.print(f"[red]Failed to reconstruct player from save: {exc}[/red]")
+        time.sleep(0.7)
+        return None
+
+
+def start_loaded_game(slot):
+    """Load player data from slot and return player object."""
+    success, message, save_data = save_system.load_game(slot)
+    if not success:
+        console.print(f"[red]{message}[/red]")
+        time.sleep(0.7)
+        return None
+
+    loaded_player = load_player_from_save(save_data, world)
+    if loaded_player is None:
+        console.print("[red]Failed to load save file.[/red]")
+        time.sleep(0.7)
+        return None
+
+    console.print(f"[bold green]{message}[/bold green]")
+    time.sleep(0.6)
+    return loaded_player
+
+
+while player is None:
+    choice = show_main_menu()
+
+    if choice == "1":
+        player = start_new_game()
+        is_new_game_session = True
+    elif choice == "2":
+        slot = show_load_menu()
+        if slot:
+            player = start_loaded_game(slot)
+            if player:
+                is_new_game_session = False
+    elif choice == "3":
+        show_manage_saves_menu()
+    elif choice == "4":
+        console.print("\n[dim]Farewell, wanderer.[/dim]\n")
+        raise SystemExit
+
+if is_new_game_session:
+    setup_initial_quest()
 
 
 # ============================================================
@@ -160,6 +382,60 @@ def show_inventory():
         table.add_row(item.get('name'), item.get('type', 'unknown'))
     
     console.print(table)
+    time.sleep(0.4)
+
+def use_inventory_item():
+    """Allow using consumable inventory items while exploring."""
+    inv = player.get_component(InventoryComponent)
+    health = player.get_component(HealthComponent)
+
+    if not inv or not inv.items:
+        console.print("[yellow]You have no items to use.[/yellow]")
+        time.sleep(0.4)
+        return
+
+    consumables = [item for item in inv.items if item.get("type", "").lower() == "consumable"]
+    if not consumables:
+        console.print("[yellow]No consumable items available.[/yellow]")
+        time.sleep(0.4)
+        return
+
+    table = Table(title="[bold green]Use Item[/bold green]", box=box.ROUNDED)
+    table.add_column("No.", style="cyan", justify="center")
+    table.add_column("Item", style="white")
+    table.add_column("Effect", style="green")
+
+    for i, item in enumerate(consumables, 1):
+        heal = item.get("heal", 0)
+        table.add_row(str(i), item.get("name", "Unknown"), f"Heal {heal}")
+
+    console.print(table)
+    console.print("[dim]Choose item number to use (0 to cancel).[/dim]")
+    choice = IntPrompt.ask(">", default=0)
+
+    if choice == 0:
+        console.print("[dim]You keep your items for now.[/dim]")
+        time.sleep(0.3)
+        return
+
+    if not (1 <= choice <= len(consumables)):
+        console.print("[red]Invalid item choice.[/red]")
+        time.sleep(0.3)
+        return
+
+    selected = consumables[choice - 1]
+    removed = inv.remove_item(selected.get("name", ""))
+    if not removed:
+        console.print("[red]Item could not be used.[/red]")
+        time.sleep(0.3)
+        return
+
+    if health:
+        heal_amount = removed.get("heal", 0)
+        health.heal(heal_amount)
+        console.print(f"[bold green]You used {removed.get('name', 'an item')}.[/bold green]")
+    else:
+        console.print("[yellow]You used the item, but nothing happened.[/yellow]")
     time.sleep(0.4)
 
 def show_quests():
@@ -324,6 +600,11 @@ def travel_to_biome(new_biome):
     if not hasattr(player, 'biome') or player.biome is None:
         console.print("[bold red][Error][/bold red] Player has no current biome!")
         return
+
+    if player.biome == new_biome:
+        console.print(f"\n[dim]You are already in {new_biome.name}.[/dim]")
+        time.sleep(0.5)
+        return
     
     # Remove player from current biome
     old_biome = player.biome
@@ -367,9 +648,11 @@ def show_menu():
     
     commands.add_row("explore / e", "Explore current biome")
     commands.add_row("inventory / i", "Check inventory")
+    commands.add_row("use / u", "Use a consumable item")
     commands.add_row("quests / q", "View quest log")
     commands.add_row("status / s", "View player status")
     commands.add_row("travel / t", "Move to another biome")
+    commands.add_row("save", "Save your progress")
     commands.add_row("help", "Show this menu")
     commands.add_row("quit / exit", "Exit game")
     
@@ -383,6 +666,7 @@ def show_menu():
 
 def main_loop():
     """Main game loop with real-time combat."""
+    start_time = time.time()
     
     # Welcome banner with typewriter
     console.clear()
@@ -518,6 +802,12 @@ def main_loop():
                     for biome_name in newly_unlocked:
                         console.print(f"[bold green]🗺️ New area unlocked: {biome_name}[/bold green]")
                         time.sleep(0.5)
+
+                console.print("[dim]Auto-saving...[/dim]")
+                success, message = save_system.save_game(player, world, slot="autosave")
+                if not success:
+                    console.print(f"[red]{message}[/red]")
+                time.sleep(0.5)
                 
                 player.in_combat_with = []
         
@@ -537,6 +827,9 @@ def main_loop():
             
             elif command == "inventory" or command == "i":
                 show_inventory()
+
+            elif command == "use" or command == "u":
+                use_inventory_item()
             
             elif command == "quests" or command == "q":
                 show_quests()
@@ -545,6 +838,41 @@ def main_loop():
                 show_status()
             
             elif command == "quit" or command == "exit":
+                console.print("\n[yellow]Are you sure you want to quit?[/yellow]")
+                console.print("[dim]Type one option and press Enter:[/dim]")
+                console.print("[dim]  y / yes     -> Save and quit[/dim]")
+                console.print("[dim]  n / no      -> Quit without saving[/dim]")
+                console.print("[dim]  c / cancel  -> Stay in game[/dim]")
+
+                raw_quit_choice = Prompt.ask(">").strip().lower()
+                choice_map = {
+                    "y": "y",
+                    "yes": "y",
+                    "n": "n",
+                    "no": "n",
+                    "c": "c",
+                    "cancel": "c",
+                }
+                quit_choice = choice_map.get(raw_quit_choice)
+                if not quit_choice:
+                    console.print("[yellow]Please type y, n, or c.[/yellow]")
+                    time.sleep(0.4)
+                    continue
+
+                if quit_choice == "c":
+                    console.print("[dim]Exit canceled.[/dim]")
+                    time.sleep(0.4)
+                    continue
+
+                if quit_choice == "y":
+                    # Capture current session time before autosave.
+                    player.playtime = getattr(player, "playtime", 0) + (time.time() - start_time)
+                    start_time = time.time()
+                    console.print("[dim]Saving before exit...[/dim]")
+                    success, message = save_system.save_game(player, world, slot="autosave")
+                    if not success:
+                        console.print(f"[red]{message}[/red]")
+
                 console.print()
                 typewriter("The world fades to ash...", delay=0.05, color="cyan")
                 time.sleep(0.5)
@@ -558,11 +886,22 @@ def main_loop():
             elif command == "travel" or command == "t":
                 show_travel_menu()
 
+            elif command == "save":
+                console.print("[cyan]Saving game...[/cyan]")
+                success, message = save_system.save_game(player, world, slot="autosave")
+                if success:
+                    console.print(f"[bold green]{message}[/bold green]")
+                else:
+                    console.print(f"[bold red]{message}[/bold red]")
+                time.sleep(0.4)
+
             else:
                 console.print("[yellow]Unknown command. Type 'help' for available commands.[/yellow]")
                 time.sleep(0.3)
         
         time.sleep(0.1)
+
+    player.playtime = getattr(player, "playtime", 0) + (time.time() - start_time)
 
 
 # ============================================================

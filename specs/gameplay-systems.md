@@ -40,6 +40,11 @@ This spec defines the gameplay/system layer in `systems.py`.
 - Uses `AIComponent.decide()` when provided.
 - Falls back to nearest-player auto-attack behavior when in range.
 
+8. `SaveSystem`
+- Persists and restores player session state using JSON files in `saves/`.
+- Supports save slot operations: ensure directory, save, load, list metadata, delete.
+- Serializes player progress and components: level/xp, biome progress, defeated bosses, inventory, HP/stats/position, timestamp, and playtime.
+
 ## Combat Contracts
 
 1. Preconditions

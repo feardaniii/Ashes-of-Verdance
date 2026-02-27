@@ -5,6 +5,9 @@
 
 import random
 import time
+import json
+import os
+from datetime import datetime
 
 
 class GameSystem:
@@ -519,3 +522,134 @@ class AIController:
         # Attack if player in range
         if nearest_player:
             self.combat_system.attack(entity, nearest_player)
+
+
+# ==========================================================
+#                       SAVE SYSTEM
+# ==========================================================
+
+
+class SaveSystem:
+    """
+    Handles save/load persistence for player-centric session state.
+    """
+
+    def __init__(self, save_dir="saves"):
+        self.save_dir = save_dir
+        self.ensure_save_directory()
+
+    def ensure_save_directory(self):
+        try:
+            os.makedirs(self.save_dir, exist_ok=True)
+            return True, f"Save directory ready: {self.save_dir}"
+        except Exception as exc:
+            return False, f"Failed to create save directory: {exc}"
+
+    def save_game(self, player, world, slot="autosave"):
+        try:
+            ok, message = self.ensure_save_directory()
+            if not ok:
+                return False, message
+
+            health = player.get_component(HealthComponent) if hasattr(player, "get_component") else None
+            stats = player.get_component(StatsComponent) if hasattr(player, "get_component") else None
+            position = player.get_component(PositionComponent) if hasattr(player, "get_component") else None
+            inventory = player.get_component(InventoryComponent) if hasattr(player, "get_component") else None
+
+            save_data = {
+                "name": getattr(player, "name", "Unknown"),
+                "level": getattr(player, "level", 1),
+                "xp": getattr(player, "xp", 0),
+                "biome": getattr(getattr(player, "biome", None), "name", "Sacred Wilds"),
+                "discovered_biomes": list(getattr(player, "discovered_biomes", set())),
+                "defeated_bosses": getattr(player, "defeated_bosses", []),
+                "playtime": int(getattr(player, "playtime", 0)),
+                "health": {
+                    "hp": getattr(health, "hp", 0),
+                    "max_hp": getattr(health, "max_hp", 0),
+                    "alive": getattr(health, "alive", True),
+                },
+                "stats": {
+                    "attack": getattr(stats, "attack", 0),
+                    "defense": getattr(stats, "defense", 0),
+                    "stamina": getattr(stats, "stamina", 0),
+                    "max_stamina": getattr(stats, "max_stamina", 0),
+                },
+                "position": {
+                    "x": getattr(position, "x", 0),
+                    "y": getattr(position, "y", 0),
+                },
+                "inventory": list(getattr(inventory, "items", [])),
+                "timestamp": datetime.now().isoformat(),
+                "world_time": getattr(world, "time", 0),
+            }
+
+            path = os.path.join(self.save_dir, f"{slot}.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(save_data, f, indent=2)
+
+            return True, f"Game saved to slot '{slot}'."
+        except Exception as exc:
+            return False, f"Save failed: {exc}"
+
+    def load_game(self, slot="autosave"):
+        try:
+            path = os.path.join(self.save_dir, f"{slot}.json")
+            if not os.path.exists(path):
+                return False, f"Save slot '{slot}' not found.", None
+
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            return True, f"Loaded slot '{slot}'.", data
+        except Exception as exc:
+            return False, f"Load failed: {exc}", None
+
+    def list_saves(self):
+        saves = []
+        ok, _ = self.ensure_save_directory()
+        if not ok:
+            return saves
+
+        try:
+            for filename in os.listdir(self.save_dir):
+                if not filename.endswith(".json"):
+                    continue
+
+                path = os.path.join(self.save_dir, filename)
+                slot = filename[:-5]
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    saves.append({
+                        "slot": slot,
+                        "name": data.get("name", "Unknown"),
+                        "level": data.get("level", 1),
+                        "biome": data.get("biome", "Unknown"),
+                        "timestamp": data.get("timestamp", "Unknown"),
+                        "playtime": data.get("playtime", 0),
+                    })
+                except Exception:
+                    saves.append({
+                        "slot": slot,
+                        "name": "Corrupted Save",
+                        "level": "-",
+                        "biome": "-",
+                        "timestamp": "Unknown",
+                        "playtime": 0,
+                    })
+        except Exception:
+            return []
+
+        saves.sort(key=lambda s: s.get("timestamp", ""), reverse=True)
+        return saves
+
+    def delete_save(self, slot):
+        try:
+            path = os.path.join(self.save_dir, f"{slot}.json")
+            if not os.path.exists(path):
+                return False, f"Save slot '{slot}' not found."
+            os.remove(path)
+            return True, f"Deleted save slot '{slot}'."
+        except Exception as exc:
+            return False, f"Delete failed: {exc}"
