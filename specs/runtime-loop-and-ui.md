@@ -8,11 +8,10 @@ This spec defines application bootstrap and runtime orchestration in `main.py`.
 
 1. Initialize world/session state
 - Build world via `build_world()`.
-- Initialize systems including `SaveSystem`.
-- Show startup main menu (`New Game`, `Load Game`, `Quit`).
+- Initialize systems including `SaveSystem` and `CraftingSystem`.
 - Show startup main menu (`New Game`, `Load Game`, `Manage Saves`, `Quit`).
 - New Game path creates player, attaches position, seeds starting potions, places player in `Sacred Wilds`, and initializes discovered biomes/defeated bosses/playtime.
-- Load Game path reconstructs player state from save slot metadata and serialized component data.
+- Load Game path reconstructs player state from save slot metadata and serialized component state (inventory, equipment, known recipes).
 - Manage Saves path lists existing save slots and supports deleting a selected slot with explicit confirmation.
 
 2. Initialize systems
@@ -32,7 +31,7 @@ This spec defines application bootstrap and runtime orchestration in `main.py`.
 
 2. Command modes
 - Exploration mode:
-  - `explore/e`, `inventory/i`, `use/u`, `quests/q`, `status/s`, `travel/t`, `save`, `help`, `quit/exit`
+  - `explore/e`, `inventory/i`, `use/u`, `equip`, `unequip`, `equipped/gear`, `craft`, `recipes`, `quests/q`, `status/s`, `travel/t`, `save`, `help`, `quit/exit`
 - Combat mode:
   - `attack/a`, `defend/d`, `potion/p`, `run/r`
 
@@ -45,12 +44,14 @@ This spec defines application bootstrap and runtime orchestration in `main.py`.
 - `combat_system.update(delta_time)`
 - `quest_system.update(delta_time)`
 - `event_system.update(delta_time)`
+- Equipment passive effects update for alive entities (`apply_passive_effects`)
 - AI updates for alive non-player entities
 
 2. Combat gate
 - Input branch is based on player `in_combat_with` state.
 - On boss death, runtime records the boss name to `player.defeated_bosses` and emits area unlock notifications for newly available biomes.
 - After post-boss dialogue/updates, runtime triggers autosave to slot `autosave`.
+- Combat damage and mitigation include equipment stat bonuses; thorn effects can reflect damage.
 
 3. Termination paths
 - Player death.

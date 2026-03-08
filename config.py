@@ -40,3 +40,49 @@ BOSS_DEFENSE_MULTIPLIER = 1.0
 # Items
 HEALTH_POTION_HEAL = 40
 STARTING_POTIONS = 3
+
+# Equipment / Crafting
+EQUIPMENT_SLOTS = [
+    "weapon",
+    "armor",
+    "talisman",
+    "ring",
+    "consumable_buff",
+    "charm",
+    "relic",
+]
+
+RARITY_COLORS = {
+    "common": "white",
+    "uncommon": "green",
+    "rare": "cyan",
+    "epic": "magenta",
+    "legendary": "yellow",
+}
+
+# Bonus baselines
+EARLY_ATTACK_MIN = 5
+EARLY_ATTACK_MAX = 8
+EARLY_DEFENSE_MIN = 3
+EARLY_DEFENSE_MAX = 5
+
+MID_ATTACK_MIN = 10
+MID_ATTACK_MAX = 15
+MID_DEFENSE_MIN = 8
+MID_DEFENSE_MAX = 12
+
+LATE_ATTACK_MIN = 18
+LATE_ATTACK_MAX = 25
+LATE_DEFENSE_MIN = 15
+LATE_DEFENSE_MAX = 20
+
+LEGENDARY_ATTACK_MIN = 25
+LEGENDARY_ATTACK_MAX = 35
+LEGENDARY_DEFENSE_MIN = 20
+LEGENDARY_DEFENSE_MAX = 30
+
+# Loot chances
+ENEMY_COMMON_ITEM_CHANCE = 0.40
+ENEMY_UNCOMMON_ITEM_CHANCE = 0.20
+ENEMY_MATERIAL_CHANCE = 0.60
+ENEMY_GOLD_CHANCE = 0.80

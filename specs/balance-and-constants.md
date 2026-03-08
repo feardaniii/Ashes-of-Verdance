@@ -39,6 +39,16 @@ This spec documents gameplay constants defined in `config.py`.
 - `HEALTH_POTION_HEAL`
 - `STARTING_POTIONS`
 
+7. Equipment / loot / rarity
+- `EQUIPMENT_SLOTS`
+- `RARITY_COLORS`
+- `EARLY_ATTACK_MIN`, `EARLY_ATTACK_MAX`, `EARLY_DEFENSE_MIN`, `EARLY_DEFENSE_MAX`
+- `MID_ATTACK_MIN`, `MID_ATTACK_MAX`, `MID_DEFENSE_MIN`, `MID_DEFENSE_MAX`
+- `LATE_ATTACK_MIN`, `LATE_ATTACK_MAX`, `LATE_DEFENSE_MIN`, `LATE_DEFENSE_MAX`
+- `LEGENDARY_ATTACK_MIN`, `LEGENDARY_ATTACK_MAX`, `LEGENDARY_DEFENSE_MIN`, `LEGENDARY_DEFENSE_MAX`
+- `ENEMY_COMMON_ITEM_CHANCE`, `ENEMY_UNCOMMON_ITEM_CHANCE`
+- `ENEMY_MATERIAL_CHANCE`, `ENEMY_GOLD_CHANCE`
+
 ## Usage Contracts
 
 1. Any gameplay logic that uses hardcoded values for these domains should be migrated to constants here.

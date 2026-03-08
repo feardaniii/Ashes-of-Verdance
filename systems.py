@@ -173,8 +173,13 @@ class Quest:
 
 
 
-from entities import BaseEntity, AliveEntity, Player, NPC, Creature, Boss, InventoryComponent, AIComponent, HealthComponent, StatsComponent
+from entities import (
+    BaseEntity, AliveEntity, Player, NPC, Creature, Boss,
+    InventoryComponent, AIComponent, HealthComponent, StatsComponent,
+    EquipmentComponent
+)
 import random
+from world_setup import get_item_by_name, generate_regular_enemy_drops, generate_boss_drops
 
 
 
@@ -231,6 +236,258 @@ class InventorySystem:
         return True
 
 
+# ==========================================================
+#                      CRAFTING SYSTEM
+# ==========================================================
+
+
+class CraftingSystem:
+    """
+    Handles recipe learning, requirement checks, and item crafting.
+    """
+
+    def __init__(self, world):
+        self.world = world
+        self.recipes = self._build_recipe_database()
+
+    def _build_recipe_database(self):
+        return {
+            "Briarfang Dagger": {
+                "ingredients": {"Living Bark": 2, "Bog Iron Fragment": 1},
+                "output": "Briarfang Dagger",
+                "unlock": {"type": "default"},
+            },
+            "Mosswoven Jerkin": {
+                "ingredients": {"Root Fiber": 3, "Living Bark": 1},
+                "output": "Mosswoven Jerkin",
+                "unlock": {"type": "default"},
+            },
+            "Sprout Sigil": {
+                "ingredients": {"Bloom Resin": 2, "Fogglass Shard": 1},
+                "output": "Sprout Sigil",
+                "unlock": {"type": "default"},
+            },
+            "Ring of Damp Soil": {
+                "ingredients": {"Living Bark": 1, "Bog Iron Fragment": 2},
+                "output": "Ring of Damp Soil",
+                "unlock": {"type": "default"},
+            },
+            "Verdant Infusion": {
+                "ingredients": {"Bloom Resin": 2, "Root Fiber": 1},
+                "output": "Verdant Infusion",
+                "unlock": {"type": "default"},
+            },
+            "Ironbark Draught": {
+                "ingredients": {"Living Bark": 2, "Bloom Resin": 1},
+                "output": "Ironbark Draught",
+                "unlock": {"type": "default"},
+            },
+            "Swampforged Cuirass": {
+                "ingredients": {"Bog Iron Fragment": 3, "Drowned Scale": 2},
+                "output": "Swampforged Cuirass",
+                "unlock": {"type": "boss", "boss": "Drowned Matron"},
+            },
+            "Tidecarver Saber": {
+                "ingredients": {"Moonwater Pearl": 2, "Bog Iron Fragment": 2},
+                "output": "Tidecarver Saber",
+                "unlock": {"type": "boss", "boss": "Drowned Matron"},
+            },
+            "Tidemother Totem": {
+                "ingredients": {"Moonwater Pearl": 3, "Drowned Scale": 1},
+                "output": "Tidemother Totem",
+                "unlock": {"type": "boss", "boss": "Drowned Matron"},
+            },
+            "Hunter's Resin": {
+                "ingredients": {"Bloom Resin": 2, "Moonwater Pearl": 1},
+                "output": "Hunter's Resin",
+                "unlock": {"type": "quest", "quest": "Verdant Rebirth"},
+            },
+            "Ashbrand Greatsword": {
+                "ingredients": {"Volcanic Ore": 4, "Ember Core": 2},
+                "output": "Ashbrand Greatsword",
+                "unlock": {"type": "boss", "boss": "Ember Colossus"},
+            },
+            "Cinderplate Mail": {
+                "ingredients": {"Volcanic Ore": 3, "Ashen Sigil Dust": 2},
+                "output": "Cinderplate Mail",
+                "unlock": {"type": "boss", "boss": "Ember Colossus"},
+            },
+            "Cindershard Ring": {
+                "ingredients": {"Ember Core": 2, "Ashen Sigil Dust": 1},
+                "output": "Cindershard Ring",
+                "unlock": {"type": "boss", "boss": "Ember Colossus"},
+            },
+            "Frostwail Pike": {
+                "ingredients": {"Frost Crystal": 3, "Tyrant Icebone": 2},
+                "output": "Frostwail Pike",
+                "unlock": {"type": "boss", "boss": "Frostbound Tyrant"},
+            },
+            "Glacierbone Carapace": {
+                "ingredients": {"Frost Crystal": 4, "Tyrant Icebone": 2},
+                "output": "Glacierbone Carapace",
+                "unlock": {"type": "boss", "boss": "Frostbound Tyrant"},
+            },
+            "Glacial Ward Rune": {
+                "ingredients": {"Tyrant Icebone": 2, "Soulflame Thread": 1},
+                "output": "Glacial Ward Rune",
+                "unlock": {"type": "boss", "boss": "Frostbound Tyrant"},
+            },
+            "Ashen War Philter": {
+                "ingredients": {"Ashen Sigil Dust": 2, "Soulflame Thread": 1},
+                "output": "Ashen War Philter",
+                "unlock": {"type": "lore", "lore_item": "Ancient Etching"},
+            },
+            "Ashwake Seal": {
+                "ingredients": {"Cathedral Shard": 2, "Ashen Sigil Dust": 2},
+                "output": "Ashwake Seal",
+                "unlock": {"type": "lore", "lore_item": "Forgotten Canticle"},
+            },
+            "Hollow Cathedral Mantle": {
+                "ingredients": {"Cathedral Shard": 3, "Soulflame Thread": 2},
+                "output": "Hollow Cathedral Mantle",
+                "unlock": {"type": "boss", "boss": "Archon of Decay"},
+            },
+            "Aegis of Rebirth": {
+                "ingredients": {"Cathedral Shard": 4, "Worldseed Fragment": 2},
+                "output": "Aegis of Rebirth",
+                "unlock": {"type": "boss", "boss": "Archon of Decay"},
+            },
+            "Verdance Oathbreaker": {
+                "ingredients": {"Worldseed Fragment": 3, "Soulflame Thread": 2},
+                "output": "Verdance Oathbreaker",
+                "unlock": {"type": "boss", "boss": "Archon of Decay"},
+            },
+            "Heartseed Reliquary": {
+                "ingredients": {"Worldseed Fragment": 2, "Moonwater Pearl": 2},
+                "output": "Heartseed Reliquary",
+                "unlock": {"type": "lore", "lore_item": "Crownless Testament"},
+            },
+        }
+
+    def _get_known_recipe_set(self, player):
+        if not hasattr(player, "known_recipes"):
+            player.known_recipes = set()
+        return player.known_recipes
+
+    def _has_quest_unlock(self, player, quest_name):
+        # Quest state is not persisted as full quest objects yet, so use
+        # lightweight progression markers for unlock gates.
+        if quest_name == "Verdant Rebirth":
+            return "Elder Barkwatcher" in getattr(player, "defeated_bosses", [])
+        return False
+
+    def _has_lore_item(self, player, lore_item_name):
+        inv = player.get_component(InventoryComponent)
+        if not inv:
+            return False
+        return any(it.get("name") == lore_item_name for it in inv.items)
+
+    def _is_recipe_unlocked_by_progress(self, player, recipe_name):
+        recipe = self.recipes.get(recipe_name)
+        if not recipe:
+            return False
+
+        unlock = recipe.get("unlock", {"type": "default"})
+        unlock_type = unlock.get("type", "default")
+
+        if unlock_type == "default":
+            return True
+        if unlock_type == "boss":
+            return unlock.get("boss") in getattr(player, "defeated_bosses", [])
+        if unlock_type == "quest":
+            return self._has_quest_unlock(player, unlock.get("quest"))
+        if unlock_type == "lore":
+            return self._has_lore_item(player, unlock.get("lore_item"))
+        return False
+
+    def sync_recipe_unlocks(self, player):
+        known = self._get_known_recipe_set(player)
+        newly_unlocked = []
+        for recipe_name in self.recipes:
+            if recipe_name in known:
+                continue
+            if self._is_recipe_unlocked_by_progress(player, recipe_name):
+                known.add(recipe_name)
+                newly_unlocked.append(recipe_name)
+        return newly_unlocked
+
+    def learn_recipe(self, player, recipe_name):
+        if recipe_name not in self.recipes:
+            return False, f"Recipe '{recipe_name}' does not exist."
+        known = self._get_known_recipe_set(player)
+        if recipe_name in known:
+            return False, f"Recipe '{recipe_name}' already known."
+        known.add(recipe_name)
+        return True, f"Learned recipe: {recipe_name}"
+
+    def can_craft(self, player, recipe_name):
+        self.sync_recipe_unlocks(player)
+        recipe = self.recipes.get(recipe_name)
+        if not recipe:
+            return False, f"Unknown recipe '{recipe_name}'."
+
+        known = self._get_known_recipe_set(player)
+        if recipe_name not in known:
+            return False, f"Recipe '{recipe_name}' is locked."
+
+        inv = player.get_component(InventoryComponent)
+        if not inv:
+            return False, "No inventory available."
+
+        inventory_counts = {}
+        for item in inv.items:
+            name = item.get("name")
+            inventory_counts[name] = inventory_counts.get(name, 0) + 1
+
+        missing = []
+        for item_name, required_qty in recipe.get("ingredients", {}).items():
+            have = inventory_counts.get(item_name, 0)
+            if have < required_qty:
+                missing.append(f"{item_name} ({have}/{required_qty})")
+
+        if missing:
+            return False, "Missing materials: " + ", ".join(missing)
+        return True, "Ready to craft."
+
+    def craft_item(self, player, recipe_name):
+        ok, message = self.can_craft(player, recipe_name)
+        if not ok:
+            return False, message
+
+        recipe = self.recipes[recipe_name]
+        inv = player.get_component(InventoryComponent)
+
+        # Consume materials.
+        for item_name, qty in recipe.get("ingredients", {}).items():
+            for _ in range(qty):
+                inv.remove_item(item_name)
+
+        crafted_item = get_item_by_name(recipe.get("output"))
+        if not crafted_item:
+            crafted_item = {
+                "name": recipe.get("output"),
+                "type": "crafted",
+                "rarity": "common",
+                "stats": {},
+                "effects": {},
+            }
+        inv.add_item(crafted_item)
+        return True, f"Crafted {crafted_item.get('name')}."
+
+    def list_recipes(self, player):
+        self.sync_recipe_unlocks(player)
+        known = self._get_known_recipe_set(player)
+        recipe_rows = []
+        for name, recipe in self.recipes.items():
+            recipe_rows.append({
+                "name": name,
+                "known": name in known,
+                "ingredients": recipe.get("ingredients", {}),
+                "output": recipe.get("output"),
+            })
+        return recipe_rows
+
+
 
 # ==========================================================
 #                       COMBAT SYSTEM
@@ -242,7 +499,7 @@ import time
 import sys
 from entities import (BaseEntity, AliveEntity, Player, NPC, Creature, Boss, 
                       InventoryComponent, AIComponent, HealthComponent, 
-                      StatsComponent, PositionComponent)  # Add PositionComponent
+                      StatsComponent, PositionComponent, EquipmentComponent)  # Add PositionComponent
 from config import ATTACK_COOLDOWN, DEFEND_DURATION, MIN_DAMAGE, DEFEND_MULTIPLIER
 from config import XP_PER_LEVEL, LEVEL_HP_GAIN, LEVEL_ATTACK_GAIN, LEVEL_DEFENSE_GAIN
 
@@ -281,19 +538,36 @@ class CombatSystem:
 
         attacker_stats = attacker.get_component(StatsComponent)
         target_stats = target.get_component(StatsComponent)
+        attacker_equipment = attacker.get_component(EquipmentComponent)
+        target_equipment = target.get_component(EquipmentComponent)
         
-        if not damage and attacker_stats:
-            base_defense = target_stats.defense if target_stats else 0
+        if not damage:
+            attacker_attack = attacker_stats.attack if attacker_stats else MIN_DAMAGE
+            target_defense = target_stats.defense if target_stats else 0
+
+            if attacker_equipment:
+                attacker_attack += attacker_equipment.get_stat_bonuses().get("attack", 0)
+            if target_equipment:
+                target_defense += target_equipment.get_stat_bonuses().get("defense", 0)
+
+            base_defense = target_defense
             if self.is_defending(target):
                 base_defense *= DEFEND_MULTIPLIER  # Use config value
                 print(f"[Combat] {target.name}'s defense blocked extra damage!")
             
-            damage = max(MIN_DAMAGE, attacker_stats.attack - base_defense)  # Use config value
+            damage = max(MIN_DAMAGE, attacker_attack - base_defense)  # Use config value
         
         target_health = target.get_component(HealthComponent)
         if target_health:
             target_health.take_damage(damage, source=attacker)
             self.attack_cooldowns[attacker.id] = self.default_cooldown
+
+            # Passive thorn effects from equipment.
+            thorns_damage = float(getattr(target, "thorns_damage", 0.0))
+            attacker_health = attacker.get_component(HealthComponent)
+            if thorns_damage > 0 and attacker_health and attacker_health.alive:
+                print(f"[Combat] {attacker.name} is pierced by thorns ({thorns_damage:.1f}).")
+                attacker_health.take_damage(thorns_damage, source=target)
             
             if not target_health.alive:
                 self.end_combat(attacker, target)
@@ -323,11 +597,30 @@ class CombatSystem:
         print(f"[Combat] +{xp_gain} XP gained!")
         player.xp += xp_gain
 
-        # Check for boss drops
-        if isinstance(enemy, Boss) and enemy.drop_item:
-            inv = player.get_component(InventoryComponent)
-            if inv:
+        inv = player.get_component(InventoryComponent)
+
+        # Boss guaranteed progression + equipment/material table.
+        if isinstance(enemy, Boss) and inv:
+            if enemy.drop_item:
                 inv.add_item(enemy.drop_item)
+
+            boss_drop_table = getattr(enemy, "drop_table", [])
+            if isinstance(boss_drop_table, str):
+                boss_drops = generate_boss_drops(boss_drop_table)
+            else:
+                boss_drops = boss_drop_table
+            for item in boss_drops:
+                inv.add_item(item)
+            if boss_drops:
+                print(f"[Combat] Loot acquired: {len(boss_drops)} boss-drop items.")
+
+        # Regular enemy drop rolls.
+        if isinstance(enemy, Creature) and inv:
+            regular_drops = generate_regular_enemy_drops(enemy)
+            for item in regular_drops:
+                inv.add_item(item)
+            if regular_drops:
+                print(f"[Combat] Loot acquired: {len(regular_drops)} enemy-drop items.")
 
         # Level-up logic (now at 50 XP instead of 100)
         if player.xp >= XP_PER_LEVEL:
@@ -555,6 +848,7 @@ class SaveSystem:
             stats = player.get_component(StatsComponent) if hasattr(player, "get_component") else None
             position = player.get_component(PositionComponent) if hasattr(player, "get_component") else None
             inventory = player.get_component(InventoryComponent) if hasattr(player, "get_component") else None
+            equipment = player.get_component(EquipmentComponent) if hasattr(player, "get_component") else None
 
             save_data = {
                 "name": getattr(player, "name", "Unknown"),
@@ -580,6 +874,8 @@ class SaveSystem:
                     "y": getattr(position, "y", 0),
                 },
                 "inventory": list(getattr(inventory, "items", [])),
+                "equipment": equipment.to_dict() if equipment and hasattr(equipment, "to_dict") else {},
+                "known_recipes": list(getattr(player, "known_recipes", set())),
                 "timestamp": datetime.now().isoformat(),
                 "world_time": getattr(world, "time", 0),
             }

@@ -43,7 +43,12 @@ This spec defines the gameplay/system layer in `systems.py`.
 8. `SaveSystem`
 - Persists and restores player session state using JSON files in `saves/`.
 - Supports save slot operations: ensure directory, save, load, list metadata, delete.
-- Serializes player progress and components: level/xp, biome progress, defeated bosses, inventory, HP/stats/position, timestamp, and playtime.
+- Serializes player progress and components: level/xp, biome progress, defeated bosses, inventory, HP/stats/position, equipment state, known recipes, timestamp, and playtime.
+
+9. `CraftingSystem`
+- Maintains recipe database (20+ recipes).
+- Supports progression-based unlocks (boss, quest marker, lore item).
+- Handles learn/check/craft/list recipe flows with material consumption.
 
 ## Combat Contracts
 
@@ -53,11 +58,17 @@ This spec defines the gameplay/system layer in `systems.py`.
 
 2. On-kill behavior
 - Cleans combat links.
-- If killer is `Player`, grants XP and optional boss drop.
+- If killer is `Player`, grants XP and loot:
+  - Bosses: guaranteed progression item + authored boss drop table.
+  - Regular creatures: chance-based material/item/gold rolls.
 - Level-up thresholds/stat gains sourced from `config.py`.
 
 3. Defend behavior
 - Defend state is temporary and keyed by entity id.
+
+4. Equipment-aware combat
+- Attack and defense calculations include `EquipmentComponent` stat bonuses.
+- Passive thorn effects can reflect damage to attackers.
 
 ## Known Structural Risks
 

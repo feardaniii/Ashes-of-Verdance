@@ -14,6 +14,7 @@ This spec defines the ECS-style domain model in `entities.py`.
 - `HealthComponent`: HP state, death transition, damage propagation.
 - `PositionComponent`: world coordinates and distance checks.
 - `InventoryComponent`: bounded item list with add/remove/has operations.
+- `EquipmentComponent`: slot-based gear (`weapon`, `armor`, `talisman`, `ring`, `consumable_buff`, `charm`, `relic`), stat bonus aggregation, passive effect handling, and consumable buff duration tracking.
 - `DialogueComponent`: scripted line retrieval by key.
 - `MagicAffinityComponent`: element-to-strength mapping.
 - `StatusEffectComponent`: timed effects and expiry.
@@ -37,7 +38,7 @@ This spec defines the ECS-style domain model in `entities.py`.
 
 3. Concrete entities
 - `Player`
-  - Adds `InventoryComponent` and `StatsComponent`.
+  - Adds `InventoryComponent`, `StatsComponent`, and `EquipmentComponent`.
   - Maintains `xp`, `level`.
   - Uses config defaults for base stats.
 - `NPC`
@@ -59,7 +60,12 @@ This spec defines the ECS-style domain model in `entities.py`.
 - One component instance per component class type per entity.
 - Re-adding same class replaces prior reference.
 
-3. Boss lifecycle
+3. Equipment constraints
+- Non-buff slots allow one equipped item per slot.
+- `consumable_buff` supports up to 3 active buff entries with turn-based expiration.
+- Passive item effects are applied periodically through `apply_passive_effects(...)`.
+
+4. Boss lifecycle
 - Boss dialogue keys expected: `intro`, `hurt`, `death` (optional by behavior).
 - Boss drops are dict-based and may be granted directly to killer inventory.
 

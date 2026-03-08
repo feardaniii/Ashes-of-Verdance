@@ -229,6 +229,186 @@ class StatsComponent(Component):
         self.recover_stamina(5.0)  # Regen 5 stamina per tick
 
 
+class EquipmentComponent(Component):
+    """
+    Handles equipped gear, temporary buff stacks, and passive effect ticking.
+    """
+
+    def __init__(self, owner):
+        super().__init__(owner)
+        from config import EQUIPMENT_SLOTS
+        self.slots = list(EQUIPMENT_SLOTS)
+        self.equipped: Dict[str, Any] = {
+            slot: ([] if slot == "consumable_buff" else None) for slot in self.slots
+        }
+        self.effect_tick_accumulator = 0.0
+
+    def _resolve_slot(self, item: Dict[str, Any]) -> Optional[str]:
+        slot = item.get("slot")
+        if slot in self.equipped:
+            return slot
+
+        item_type = item.get("type")
+        type_to_slot = {
+            "weapon": "weapon",
+            "armor": "armor",
+            "talisman": "talisman",
+            "ring": "ring",
+            "consumable_buff": "consumable_buff",
+            "charm": "charm",
+            "relic": "relic",
+        }
+        resolved = type_to_slot.get(item_type)
+        if resolved in self.equipped:
+            return resolved
+        return None
+
+    def _iter_equipped_items(self):
+        for slot, value in self.equipped.items():
+            if slot == "consumable_buff":
+                for entry in value:
+                    yield entry.get("item", {})
+            elif value:
+                yield value
+
+    def equip_item(self, item: Dict[str, Any]):
+        slot = self._resolve_slot(item)
+        if not slot:
+            return False, f"{item.get('name', 'Item')} cannot be equipped.", None
+
+        if slot == "consumable_buff":
+            active_buffs = self.equipped["consumable_buff"]
+            if len(active_buffs) >= 3:
+                return False, "Consumable buff slots are full (3/3).", None
+            duration = int(item.get("duration", 3))
+            active_buffs.append({
+                "item": dict(item),
+                "remaining_turns": duration,
+            })
+            return True, f"{item.get('name', 'Buff')} activated for {duration} turns.", None
+
+        previous_item = self.equipped.get(slot)
+        self.equipped[slot] = dict(item)
+        if previous_item:
+            return True, f"Equipped {item.get('name')} in {slot} slot.", previous_item
+        return True, f"Equipped {item.get('name')} in {slot} slot.", None
+
+    def unequip_item(self, slot: str, item_name: str = None):
+        if slot not in self.equipped:
+            return False, "Invalid slot.", None
+
+        if slot == "consumable_buff":
+            active_buffs = self.equipped["consumable_buff"]
+            if not active_buffs:
+                return False, "No active consumable buffs.", None
+
+            if item_name:
+                for i, entry in enumerate(active_buffs):
+                    if entry.get("item", {}).get("name") == item_name:
+                        removed = active_buffs.pop(i).get("item")
+                        return True, f"Removed buff {removed.get('name')}.", removed
+                return False, f"No active buff named '{item_name}'.", None
+
+            removed = active_buffs.pop().get("item")
+            return True, f"Removed buff {removed.get('name')}.", removed
+
+        current = self.equipped.get(slot)
+        if not current:
+            return False, f"No item equipped in {slot}.", None
+        self.equipped[slot] = None
+        return True, f"Unequipped {current.get('name')} from {slot}.", current
+
+    def get_stat_bonuses(self):
+        bonuses = {
+            "attack": 0.0,
+            "defense": 0.0,
+            "stamina": 0.0,
+            "max_stamina": 0.0,
+            "max_hp": 0.0,
+        }
+        for item in self._iter_equipped_items():
+            stats = item.get("stats", {})
+            for key in bonuses:
+                bonuses[key] += float(stats.get(key, 0.0))
+        return bonuses
+
+    def get_active_effects(self):
+        effects: Dict[str, float] = {}
+        for item in self._iter_equipped_items():
+            for key, value in item.get("effects", {}).items():
+                effects[key] = effects.get(key, 0.0) + float(value)
+        return effects
+
+    def apply_passive_effects(self, delta_time: float = 1.0):
+        """
+        Applies passive effects every ~1 second and decrements buff durations.
+        """
+        self.effect_tick_accumulator += delta_time
+        if self.effect_tick_accumulator < 1.0:
+            return
+        self.effect_tick_accumulator -= 1.0
+
+        # Update temporary buff durations.
+        active_buffs = self.equipped["consumable_buff"]
+        expired = []
+        for entry in list(active_buffs):
+            entry["remaining_turns"] = max(0, int(entry.get("remaining_turns", 0)) - 1)
+            if entry["remaining_turns"] <= 0:
+                expired.append(entry.get("item", {}).get("name", "Unknown Buff"))
+                active_buffs.remove(entry)
+
+        if expired:
+            print(f"[{self.owner.name}] Buff expired: {', '.join(expired)}")
+
+        effects = self.get_active_effects()
+        self.owner.thorns_damage = effects.get("thorns", 0.0)
+
+        health = self.owner.get_component(HealthComponent)
+        regen_hp = effects.get("regen_hp", 0.0)
+        if health and health.alive and regen_hp > 0:
+            old_hp = health.hp
+            health.hp = min(health.max_hp, health.hp + regen_hp)
+            healed = health.hp - old_hp
+            if healed > 0:
+                print(f"[{self.owner.name}] passively regenerates {healed:.1f} HP.")
+
+        stats = self.owner.get_component(StatsComponent)
+        regen_stamina = effects.get("regen_stamina", 0.0)
+        if stats and regen_stamina > 0:
+            stats.recover_stamina(regen_stamina)
+
+    def to_dict(self):
+        serialized = {}
+        for slot, value in self.equipped.items():
+            if slot == "consumable_buff":
+                serialized[slot] = [
+                    {
+                        "item": dict(entry.get("item", {})),
+                        "remaining_turns": int(entry.get("remaining_turns", 0)),
+                    }
+                    for entry in value
+                ]
+            else:
+                serialized[slot] = dict(value) if value else None
+        return serialized
+
+    def load_from_dict(self, payload: Dict[str, Any]):
+        for slot in self.equipped:
+            if slot == "consumable_buff":
+                raw = payload.get(slot, [])
+                self.equipped[slot] = [
+                    {
+                        "item": dict(entry.get("item", {})),
+                        "remaining_turns": int(entry.get("remaining_turns", 0)),
+                    }
+                    for entry in raw
+                    if isinstance(entry, dict)
+                ][:3]
+            else:
+                item = payload.get(slot)
+                self.equipped[slot] = dict(item) if isinstance(item, dict) else None
+
+
 
 # ===========================
 #       ENTITY BASES
@@ -324,6 +504,7 @@ class Player(AliveEntity):
             defense=PLAYER_START_DEFENSE,
             stamina=PLAYER_START_STAMINA   
         ))
+        self.add_component(EquipmentComponent(self))
 
     def on_death(self, killer: Optional["BaseEntity"] = None):
         print(f"💀 {self.name} fell in battle... (player death logic placeholder)")

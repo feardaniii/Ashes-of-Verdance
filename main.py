@@ -12,12 +12,15 @@ from rich.live import Live
 console = Console()
 
 import time
-from world_setup import build_world
+from world_setup import build_world, get_item_by_name
 from systems import (
     EventSystem, DialogueSystem, QuestSystem,
-    InventorySystem, CombatSystem, AIController, Quest, SaveSystem
+    InventorySystem, CombatSystem, AIController, Quest, SaveSystem, CraftingSystem
 )
-from entities import Player, PositionComponent, InventoryComponent, HealthComponent, Boss, Creature, NPC, StatsComponent
+from entities import (
+    Player, PositionComponent, InventoryComponent, HealthComponent,
+    Boss, Creature, NPC, StatsComponent, EquipmentComponent
+)
 
 # ============================================================
 #                     TYPEWRITER EFFECTS
@@ -52,12 +55,13 @@ time.sleep(0.5)
 # Build the world
 world = build_world()
 
-from config import STARTING_POTIONS, HEALTH_POTION_HEAL
+from config import STARTING_POTIONS, HEALTH_POTION_HEAL, RARITY_COLORS, EQUIPMENT_SLOTS
 
 event_system = EventSystem(world)
 dialogue_system = DialogueSystem(world)
 quest_system = QuestSystem(world)
 inventory_system = InventorySystem(world)
+crafting_system = CraftingSystem(world)
 combat_system = CombatSystem(world)
 ai_controller = AIController(world)
 ai_controller.combat_system = combat_system  # Link combat system to AI
@@ -240,6 +244,15 @@ def start_new_game():
     if inv:
         for _ in range(STARTING_POTIONS):
             inv.add_item({"name": "Health Potion", "type": "consumable", "heal": HEALTH_POTION_HEAL})
+        starter_weapon = get_item_by_name("Briarfang Dagger")
+        starter_armor = get_item_by_name("Mosswoven Jerkin")
+        starter_ring = get_item_by_name("Ring of Damp Soil")
+        for starter in [starter_weapon, starter_armor, starter_ring]:
+            if starter:
+                inv.add_item(starter)
+
+    new_player.known_recipes = set()
+    crafting_system.sync_recipe_unlocks(new_player)
 
     return new_player
 
@@ -281,6 +294,13 @@ def load_player_from_save(save_data, world):
         inventory = loaded_player.get_component(InventoryComponent)
         if inventory:
             inventory.items = list(save_data.get("inventory", []))
+
+        equipment = loaded_player.get_component(EquipmentComponent)
+        if equipment and isinstance(save_data.get("equipment"), dict):
+            equipment.load_from_dict(save_data.get("equipment", {}))
+
+        loaded_player.known_recipes = set(save_data.get("known_recipes", []))
+        crafting_system.sync_recipe_unlocks(loaded_player)
 
         biome_name = save_data.get("biome", "Sacred Wilds")
         biome = world.get_biome(biome_name) or world.get_biome("Sacred Wilds")
@@ -375,11 +395,20 @@ def show_inventory():
         return
     
     table = Table(title="[bold cyan]📦 Inventory[/bold cyan]", box=box.ROUNDED)
-    table.add_column("Item", style="cyan")
+    table.add_column("No.", style="cyan", justify="center")
+    table.add_column("Item", style="white")
     table.add_column("Type", style="magenta")
+    table.add_column("Rarity", style="white")
     
-    for item in inv.items:
-        table.add_row(item.get('name'), item.get('type', 'unknown'))
+    for i, item in enumerate(inv.items, 1):
+        rarity = item.get("rarity", "common")
+        color = RARITY_COLORS.get(rarity, "white")
+        table.add_row(
+            str(i),
+            f"[{color}]{item.get('name', 'Unknown')}[/{color}]",
+            item.get('type', 'unknown'),
+            f"[{color}]{rarity}[/{color}]"
+        )
     
     console.print(table)
     time.sleep(0.4)
@@ -438,6 +467,230 @@ def use_inventory_item():
         console.print("[yellow]You used the item, but nothing happened.[/yellow]")
     time.sleep(0.4)
 
+
+def show_equipped_items():
+    """Display currently equipped gear and active buffs."""
+    equipment = player.get_component(EquipmentComponent)
+    if not equipment:
+        console.print("[red]No equipment component found.[/red]")
+        time.sleep(0.4)
+        return
+
+    table = Table(title="[bold yellow]⚒ Equipped Gear[/bold yellow]", box=box.ROUNDED)
+    table.add_column("Slot", style="cyan")
+    table.add_column("Item", style="white")
+    table.add_column("Details", style="dim")
+
+    for slot in EQUIPMENT_SLOTS:
+        equipped_value = equipment.equipped.get(slot)
+        if slot == "consumable_buff":
+            if not equipped_value:
+                table.add_row(slot, "[dim]None[/dim]", "-")
+                continue
+
+            names = []
+            for entry in equipped_value:
+                item = entry.get("item", {})
+                rarity = item.get("rarity", "common")
+                color = RARITY_COLORS.get(rarity, "white")
+                names.append(
+                    f"[{color}]{item.get('name', 'Unknown')}[/{color}] "
+                    f"({entry.get('remaining_turns', 0)}t)"
+                )
+            table.add_row(slot, "\n".join(names), "Active temporary buffs")
+            continue
+
+        if not equipped_value:
+            table.add_row(slot, "[dim]None[/dim]", "-")
+            continue
+
+        rarity = equipped_value.get("rarity", "common")
+        color = RARITY_COLORS.get(rarity, "white")
+        stats = equipped_value.get("stats", {})
+        effects = equipped_value.get("effects", {})
+        details = []
+        if stats:
+            details.append(", ".join(f"{k}+{v}" for k, v in stats.items()))
+        if effects:
+            details.append(", ".join(f"{k}:{v}" for k, v in effects.items()))
+        table.add_row(
+            slot,
+            f"[{color}]{equipped_value.get('name', 'Unknown')}[/{color}]",
+            " | ".join(details) if details else "-"
+        )
+
+    bonuses = equipment.get_stat_bonuses()
+    table.caption = (
+        f"Bonuses -> ATK +{bonuses.get('attack', 0):.1f} | "
+        f"DEF +{bonuses.get('defense', 0):.1f} | "
+        f"STA +{bonuses.get('stamina', 0):.1f}"
+    )
+    console.print(table)
+    time.sleep(0.4)
+
+
+def equip_item_menu():
+    """Equip an item from inventory into the correct slot."""
+    inv = player.get_component(InventoryComponent)
+    equipment = player.get_component(EquipmentComponent)
+    if not inv or not equipment:
+        console.print("[red]Cannot equip items right now.[/red]")
+        time.sleep(0.4)
+        return
+
+    equippable = [
+        item for item in inv.items
+        if item.get("slot") in EQUIPMENT_SLOTS or item.get("type") in EQUIPMENT_SLOTS
+    ]
+    if not equippable:
+        console.print("[yellow]No equippable items in inventory.[/yellow]")
+        time.sleep(0.4)
+        return
+
+    table = Table(title="[bold]Equip Item[/bold]", box=box.ROUNDED)
+    table.add_column("No.", style="cyan", justify="center")
+    table.add_column("Item", style="white")
+    table.add_column("Slot", style="magenta")
+    table.add_column("Rarity", style="white")
+    table.add_column("Stats", style="green")
+    for i, item in enumerate(equippable, 1):
+        rarity = item.get("rarity", "common")
+        color = RARITY_COLORS.get(rarity, "white")
+        stats = item.get("stats", {})
+        stats_text = ", ".join(f"{k}+{v}" for k, v in stats.items()) if stats else "-"
+        table.add_row(
+            str(i),
+            f"[{color}]{item.get('name', 'Unknown')}[/{color}]",
+            str(item.get("slot", item.get("type", "unknown"))),
+            f"[{color}]{rarity}[/{color}]",
+            stats_text
+        )
+    console.print(table)
+    console.print("[dim]Choose item number to equip (0 to cancel).[/dim]")
+
+    choice = IntPrompt.ask(">", default=0)
+    if choice == 0:
+        return
+    if not (1 <= choice <= len(equippable)):
+        console.print("[red]Invalid choice.[/red]")
+        time.sleep(0.3)
+        return
+
+    selected = equippable[choice - 1]
+    success, message, replaced_item = equipment.equip_item(selected)
+    if not success:
+        console.print(f"[yellow]{message}[/yellow]")
+        time.sleep(0.5)
+        return
+
+    inv.remove_item(selected.get("name", ""))
+    if replaced_item:
+        inv.add_item(replaced_item)
+    console.print(f"[bold green]{message}[/bold green]")
+    time.sleep(0.5)
+
+
+def unequip_item_menu():
+    """Unequip a specific slot."""
+    inv = player.get_component(InventoryComponent)
+    equipment = player.get_component(EquipmentComponent)
+    if not inv or not equipment:
+        console.print("[red]Cannot unequip items right now.[/red]")
+        time.sleep(0.4)
+        return
+
+    show_equipped_items()
+    slot = Prompt.ask(
+        "Choose slot to unequip",
+        choices=EQUIPMENT_SLOTS + ["cancel"],
+        show_choices=False,
+        default="cancel",
+    ).strip().lower()
+    if slot == "cancel":
+        return
+
+    if slot == "consumable_buff":
+        active = equipment.equipped.get("consumable_buff", [])
+        if not active:
+            console.print("[yellow]No active consumable buffs.[/yellow]")
+            time.sleep(0.4)
+            return
+        success, message, _ = equipment.unequip_item("consumable_buff")
+        if success:
+            console.print(f"[green]{message}[/green]")
+        else:
+            console.print(f"[yellow]{message}[/yellow]")
+        time.sleep(0.4)
+        return
+
+    success, message, removed_item = equipment.unequip_item(slot)
+    if not success:
+        console.print(f"[yellow]{message}[/yellow]")
+        time.sleep(0.4)
+        return
+
+    if removed_item:
+        inv.add_item(removed_item)
+    console.print(f"[green]{message}[/green]")
+    time.sleep(0.4)
+
+
+def show_recipes():
+    """Display known and locked recipes."""
+    recipes = crafting_system.list_recipes(player)
+    table = Table(title="[bold cyan]Crafting Recipes[/bold cyan]", box=box.ROUNDED)
+    table.add_column("Recipe", style="white")
+    table.add_column("Output", style="green")
+    table.add_column("Materials", style="magenta")
+    table.add_column("Status", style="cyan")
+
+    for recipe in recipes:
+        ingredients = ", ".join(
+            f"{name} x{qty}" for name, qty in recipe.get("ingredients", {}).items()
+        )
+        status = "[green]Known[/green]" if recipe.get("known") else "[dim]Locked[/dim]"
+        table.add_row(recipe.get("name"), recipe.get("output"), ingredients, status)
+
+    console.print(table)
+    time.sleep(0.4)
+
+
+def craft_item_menu():
+    """Craft an item from known recipes."""
+    recipes = [r for r in crafting_system.list_recipes(player) if r.get("known")]
+    if not recipes:
+        console.print("[yellow]No known recipes yet.[/yellow]")
+        time.sleep(0.4)
+        return
+
+    table = Table(title="[bold]Craft Item[/bold]", box=box.ROUNDED)
+    table.add_column("No.", style="cyan", justify="center")
+    table.add_column("Recipe", style="white")
+    table.add_column("Materials", style="magenta")
+    for i, recipe in enumerate(recipes, 1):
+        ingredients = ", ".join(
+            f"{name} x{qty}" for name, qty in recipe.get("ingredients", {}).items()
+        )
+        table.add_row(str(i), recipe.get("name"), ingredients)
+
+    console.print(table)
+    console.print("[dim]Choose recipe number to craft (0 to cancel).[/dim]")
+    choice = IntPrompt.ask(">", default=0)
+    if choice == 0:
+        return
+    if not (1 <= choice <= len(recipes)):
+        console.print("[red]Invalid choice.[/red]")
+        time.sleep(0.3)
+        return
+
+    selected = recipes[choice - 1]
+    success, message = crafting_system.craft_item(player, selected.get("name"))
+    if success:
+        console.print(f"[bold green]{message}[/bold green]")
+    else:
+        console.print(f"[bold yellow]{message}[/bold yellow]")
+    time.sleep(0.5)
+
 def show_quests():
     """Display active quests."""
     # Active quests
@@ -469,6 +722,8 @@ def show_status():
     health = player.get_component(HealthComponent)
     stats = player.get_component(StatsComponent)
     pos = player.get_component(PositionComponent)
+    equipment = player.get_component(EquipmentComponent)
+    bonuses = equipment.get_stat_bonuses() if equipment else {"attack": 0, "defense": 0, "stamina": 0}
     
     # Create a table for stats
     table = Table(title=f"[bold cyan]{player.name}[/bold cyan]", box=box.ROUNDED)
@@ -485,14 +740,26 @@ def show_status():
         table.add_row("HP", f"[{hp_color}]{health.hp:.1f}/{health.max_hp}[/{hp_color}]")
     
     if stats:
-        table.add_row("Attack", f"{stats.attack:.1f}")
-        table.add_row("Defense", f"{stats.defense:.1f}")
-        table.add_row("Stamina", f"{stats.stamina:.1f}/{stats.max_stamina}")
+        total_attack = stats.attack + bonuses.get("attack", 0)
+        total_defense = stats.defense + bonuses.get("defense", 0)
+        bonus_stamina = bonuses.get("max_stamina", 0) + bonuses.get("stamina", 0)
+        table.add_row("Attack", f"{total_attack:.1f} [dim](base {stats.attack:.1f} + {bonuses.get('attack', 0):.1f})[/dim]")
+        table.add_row("Defense", f"{total_defense:.1f} [dim](base {stats.defense:.1f} + {bonuses.get('defense', 0):.1f})[/dim]")
+        table.add_row("Stamina", f"{stats.stamina:.1f}/{stats.max_stamina + bonus_stamina:.1f}")
     
     if pos:
         table.add_row("Position", f"({pos.x:.1f}, {pos.y:.1f})")
     
     table.add_row("Location", f"[bold yellow]{player.biome.name if hasattr(player, 'biome') else 'Unknown'}[/bold yellow]")
+    if equipment:
+        equipped_count = 0
+        for slot in EQUIPMENT_SLOTS:
+            value = equipment.equipped.get(slot)
+            if slot == "consumable_buff":
+                equipped_count += len(value)
+            elif value:
+                equipped_count += 1
+        table.add_row("Gear Slots Active", f"{equipped_count}")
     
     console.print(table)
     time.sleep(0.4)
@@ -649,6 +916,11 @@ def show_menu():
     commands.add_row("explore / e", "Explore current biome")
     commands.add_row("inventory / i", "Check inventory")
     commands.add_row("use / u", "Use a consumable item")
+    commands.add_row("equip", "Equip an item")
+    commands.add_row("unequip", "Unequip gear from a slot")
+    commands.add_row("equipped / gear", "View equipped gear")
+    commands.add_row("craft", "Craft an item from known recipes")
+    commands.add_row("recipes", "View recipe book")
     commands.add_row("quests / q", "View quest log")
     commands.add_row("status / s", "View player status")
     commands.add_row("travel / t", "Move to another biome")
@@ -699,6 +971,16 @@ def main_loop():
         combat_system.update(delta_time)
         quest_system.update(delta_time)
         event_system.update(delta_time)
+
+        # Apply passive equipment effects each tick.
+        for biome in world.biomes.values():
+            for entity in biome.entities:
+                if hasattr(entity, "is_alive") and not entity.is_alive():
+                    continue
+                if hasattr(entity, "get_component"):
+                    equipped_comp = entity.get_component(EquipmentComponent)
+                    if equipped_comp:
+                        equipped_comp.apply_passive_effects(delta_time)
         
         # Update AI entities
         for biome in world.biomes.values():
@@ -830,6 +1112,21 @@ def main_loop():
 
             elif command == "use" or command == "u":
                 use_inventory_item()
+
+            elif command == "equip":
+                equip_item_menu()
+
+            elif command == "unequip":
+                unequip_item_menu()
+
+            elif command == "equipped" or command == "gear":
+                show_equipped_items()
+
+            elif command == "craft":
+                craft_item_menu()
+
+            elif command == "recipes":
+                show_recipes()
             
             elif command == "quests" or command == "q":
                 show_quests()

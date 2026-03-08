@@ -9,9 +9,9 @@
   "defeated_bosses": [
     "Elder Barkwatcher"
   ],
-  "playtime": 0,
+  "playtime": 568,
   "health": {
-    "hp": 65.0,
+    "hp": 77.5,
     "max_hp": 100.0,
     "alive": true
   },
@@ -32,6 +32,11 @@
       "heal": 40
     },
     {
+      "name": "Health Potion",
+      "type": "consumable",
+      "heal": 40
+    },
+    {
       "name": "Ancient Bark Charm",
       "type": "progression",
       "power": 1
@@ -40,8 +45,130 @@
       "name": "Ancient Bark Charm",
       "type": "progression",
       "power": 1
+    },
+    {
+      "name": "Sprout Sigil",
+      "type": "talisman",
+      "rarity": "common",
+      "slot": "talisman",
+      "stats": {
+        "attack": 2
+      },
+      "effects": {
+        "regen_stamina": 1
+      },
+      "duration": 0,
+      "tier": "early"
+    },
+    {
+      "name": "Bloom Resin",
+      "type": "material",
+      "rarity": "common",
+      "slot": null,
+      "stats": {},
+      "effects": {},
+      "duration": 0,
+      "tier": "early"
+    },
+    {
+      "name": "Living Bark",
+      "type": "material",
+      "rarity": "common",
+      "slot": null,
+      "stats": {},
+      "effects": {},
+      "duration": 0,
+      "tier": "early"
+    },
+    {
+      "name": "Root Fiber",
+      "type": "material",
+      "rarity": "common",
+      "slot": null,
+      "stats": {},
+      "effects": {},
+      "duration": 0,
+      "tier": "early"
+    },
+    {
+      "name": "Root Fiber",
+      "type": "material",
+      "rarity": "common",
+      "slot": null,
+      "stats": {},
+      "effects": {},
+      "duration": 0,
+      "tier": "early"
+    },
+    {
+      "name": "Forest Blessing",
+      "type": "consumable",
+      "heal": 50
+    },
+    {
+      "name": "Briarfang Dagger",
+      "type": "weapon",
+      "rarity": "common",
+      "slot": "weapon",
+      "stats": {
+        "attack": 5
+      },
+      "effects": {},
+      "duration": 0,
+      "tier": "early"
     }
   ],
-  "timestamp": "2026-02-27T20:54:00.810902",
+  "equipment": {
+    "weapon": {
+      "name": "Mossguard Blade",
+      "type": "weapon",
+      "rarity": "common",
+      "slot": "weapon",
+      "stats": {
+        "attack": 7
+      },
+      "effects": {},
+      "duration": 0,
+      "tier": "early"
+    },
+    "armor": {
+      "name": "Mosswoven Jerkin",
+      "type": "armor",
+      "rarity": "common",
+      "slot": "armor",
+      "stats": {
+        "defense": 3
+      },
+      "effects": {},
+      "duration": 0,
+      "tier": "early"
+    },
+    "talisman": null,
+    "ring": {
+      "name": "Ring of Damp Soil",
+      "type": "ring",
+      "rarity": "common",
+      "slot": "ring",
+      "stats": {
+        "defense": 2
+      },
+      "effects": {},
+      "duration": 0,
+      "tier": "early"
+    },
+    "consumable_buff": [],
+    "charm": null,
+    "relic": null
+  },
+  "known_recipes": [
+    "Ring of Damp Soil",
+    "Hunter's Resin",
+    "Sprout Sigil",
+    "Mosswoven Jerkin",
+    "Ironbark Draught",
+    "Briarfang Dagger",
+    "Verdant Infusion"
+  ],
+  "timestamp": "2026-03-08T23:24:47.174523",
   "world_time": 0
 }
