@@ -8,14 +8,14 @@ This spec defines application bootstrap and runtime orchestration in `main.py`.
 
 1. Initialize world/session state
 - Build world via `build_world()`.
-- Initialize systems including `SaveSystem` and `CraftingSystem`.
+- Initialize systems including `SaveSystem`, `CraftingSystem`, and `EnemyAIController`.
 - Show startup main menu (`New Game`, `Load Game`, `Manage Saves`, `Quit`).
-- New Game path creates player, attaches position, seeds starting potions, places player in `Sacred Wilds`, and initializes discovered biomes/defeated bosses/playtime.
-- Load Game path reconstructs player state from save slot metadata and serialized component state (inventory, equipment, known recipes).
+- New Game path creates player, attaches position, seeds starting potions, places player in `Sacred Wilds`, and initializes discovered biomes/progression (`defeated_bosses`, `defeated_elites`, `gold`, `playtime`).
+- Load Game path reconstructs player state from save slot metadata and serialized component/progression state (inventory, equipment, known recipes, gold, defeated elites).
 - Manage Saves path lists existing save slots and supports deleting a selected slot with explicit confirmation.
 
 2. Initialize systems
-- Event, dialogue, quest, inventory, combat, AI controller.
+- Event, dialogue, quest, inventory, crafting, combat, AI controller, enemy AI controller.
 - Link AI controller to combat system.
 
 3. Register initial quest
@@ -31,9 +31,10 @@ This spec defines application bootstrap and runtime orchestration in `main.py`.
 
 2. Command modes
 - Exploration mode:
-  - `explore/e`, `inventory/i`, `use/u`, `equip`, `unequip`, `equipped/gear`, `craft`, `recipes`, `quests/q`, `status/s`, `travel/t`, `save`, `help`, `quit/exit`
+  - `explore/e`, `boss/b/challenge`, `info/area`, `inventory/i`, `use/u`, `equip`, `unequip`, `equipped/gear`, `craft`, `recipes`, `quests/q`, `status/s`, `travel/t`, `save`, `help`, `quit/exit`
 - Combat mode:
   - `attack/a`, `defend/d`, `potion/p`, `run/r`
+  - Multi-target attacks include target selection when multiple enemies are alive.
 
 3. Typewriter helpers
 - `typewriter(...)` and `typewriter_panel(...)` provide paced narrative output.
@@ -49,11 +50,31 @@ This spec defines application bootstrap and runtime orchestration in `main.py`.
 
 2. Combat gate
 - Input branch is based on player `in_combat_with` state.
+- Combat supports 1..N enemies simultaneously; all living enemies execute pattern-AI each enemy turn.
+- Turn-start status effects (poison/burn/slow/stun) are processed for player and enemies.
+- Reward payout is aggregated from all defeated enemies in the encounter (items + gold + XP).
 - On boss death, runtime records the boss name to `player.defeated_bosses` and emits area unlock notifications for newly available biomes.
-- After post-boss dialogue/updates, runtime triggers autosave to slot `autosave`.
+- Elite encounter deaths persist to `player.defeated_elites` and prevent future elite respawns.
+- After boss kill resolution, runtime triggers autosave to slot `autosave`.
 - Combat damage and mitigation include equipment stat bonuses; thorn effects can reflect damage.
 
-3. Termination paths
+3. Encounter exploration flow
+- `explore` has a 50% chance to trigger an encounter.
+- Bosses are never spawned by `explore`.
+- Encounter composition roll:
+  - 70%: 1-2 regular enemies
+  - 20%: 2-3 regular enemies
+  - 10%: 1 elite enemy (if not already defeated)
+- Enemy descriptions are shown once per session on first encounter.
+
+4. Boss challenge flow
+- `boss` / `b` / `challenge` explicitly starts the biome boss fight if alive.
+- If no boss exists in the area or boss is already defeated, runtime prints a status message and returns to exploration.
+
+5. Area info flow
+- `info` / `area` shows biome metadata and current boss status (`Alive` vs `Defeated`).
+
+6. Termination paths
 - Player death.
 - User quit command.
 - Keyboard interrupt handler at module entrypoint.

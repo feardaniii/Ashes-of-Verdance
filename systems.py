@@ -176,7 +176,7 @@ class Quest:
 from entities import (
     BaseEntity, AliveEntity, Player, NPC, Creature, Boss,
     InventoryComponent, AIComponent, HealthComponent, StatsComponent,
-    EquipmentComponent
+    EquipmentComponent, StatusEffectComponent
 )
 import random
 from world_setup import get_item_by_name, generate_regular_enemy_drops, generate_boss_drops
@@ -499,7 +499,7 @@ import time
 import sys
 from entities import (BaseEntity, AliveEntity, Player, NPC, Creature, Boss, 
                       InventoryComponent, AIComponent, HealthComponent, 
-                      StatsComponent, PositionComponent, EquipmentComponent)  # Add PositionComponent
+                      StatsComponent, PositionComponent, EquipmentComponent, StatusEffectComponent)  # Add PositionComponent
 from config import ATTACK_COOLDOWN, DEFEND_DURATION, MIN_DAMAGE, DEFEND_MULTIPLIER
 from config import XP_PER_LEVEL, LEVEL_HP_GAIN, LEVEL_ATTACK_GAIN, LEVEL_DEFENSE_GAIN
 
@@ -520,20 +520,35 @@ class CombatSystem:
         self.active_combats = []
         self.default_cooldown = ATTACK_COOLDOWN  # Use config value
 
-    def update(self, delta_time: float):
-        """Called every game tick to process ongoing combat."""
-        # Update cooldowns
-        for entity_id in list(self.attack_cooldowns.keys()):
-            self.attack_cooldowns[entity_id] -= delta_time
-            if self.attack_cooldowns[entity_id] <= 0:
-                del self.attack_cooldowns[entity_id]
+    def get_attack_cooldown(self, entity) -> float:
+        cooldown = self.default_cooldown
+        status: StatusEffectComponent = entity.get_component(StatusEffectComponent)  # type: ignore
+        if status:
+            cooldown *= status.get_cooldown_multiplier()
+        return cooldown
 
     def can_attack(self, entity) -> bool:
         """Check if entity's attack cooldown has expired."""
         return entity.id not in self.attack_cooldowns
 
-    def attack(self, attacker, target, damage: float = None):
-        if not self.can_attack(attacker):
+    def update(self, delta_time: float):
+        """Process cooldown timers each frame."""
+        for entity_id in list(self.attack_cooldowns.keys()):
+            self.attack_cooldowns[entity_id] -= delta_time
+            if self.attack_cooldowns[entity_id] <= 0:
+                del self.attack_cooldowns[entity_id]
+
+        for entity_id in list(self.defend_cooldowns.keys()):
+            self.defend_cooldowns[entity_id] -= delta_time
+            if self.defend_cooldowns[entity_id] <= 0:
+                del self.defend_cooldowns[entity_id]
+
+    def attack(self, attacker, target, damage: float = None, ignore_cooldown: bool = False, apply_cooldown: bool = True):
+        if (not ignore_cooldown) and (not self.can_attack(attacker)):
+            return False
+
+        target_health = target.get_component(HealthComponent)
+        if not target_health or not target_health.alive:
             return False
 
         attacker_stats = attacker.get_component(StatsComponent)
@@ -556,176 +571,96 @@ class CombatSystem:
                 print(f"[Combat] {target.name}'s defense blocked extra damage!")
             
             damage = max(MIN_DAMAGE, attacker_attack - base_defense)  # Use config value
-        
-        target_health = target.get_component(HealthComponent)
-        if target_health:
-            target_health.take_damage(damage, source=attacker)
-            self.attack_cooldowns[attacker.id] = self.default_cooldown
 
-            # Passive thorn effects from equipment.
-            thorns_damage = float(getattr(target, "thorns_damage", 0.0))
-            attacker_health = attacker.get_component(HealthComponent)
-            if thorns_damage > 0 and attacker_health and attacker_health.alive:
-                print(f"[Combat] {attacker.name} is pierced by thorns ({thorns_damage:.1f}).")
-                attacker_health.take_damage(thorns_damage, source=target)
-            
-            if not target_health.alive:
-                self.end_combat(attacker, target)
-                if hasattr(attacker, 'in_combat_with') and target in attacker.in_combat_with:
-                    attacker.in_combat_with.remove(target)
-            
-            return True
-        
-        return False
+        target_health.take_damage(damage, source=attacker)
+        if apply_cooldown:
+            self.attack_cooldowns[attacker.id] = self.get_attack_cooldown(attacker)
+
+        attacker_health = attacker.get_component(HealthComponent)
+
+        # Counter stance reflection.
+        counter_reflect = float(getattr(target, "counter_reflect", 0.0))
+        if counter_reflect > 0 and self.is_defending(target) and attacker_health and attacker_health.alive:
+            reflected = max(1.0, float(damage) * counter_reflect)
+            print(f"[Combat] {target.name} counters for {reflected:.1f} damage!")
+            attacker_health.take_damage(reflected, source=target)
+
+        # Passive thorn effects from equipment.
+        thorns_damage = float(getattr(target, "thorns_damage", 0.0))
+        if thorns_damage > 0 and attacker_health and attacker_health.alive:
+            print(f"[Combat] {attacker.name} is pierced by thorns ({thorns_damage:.1f}).")
+            attacker_health.take_damage(thorns_damage, source=target)
+
+        if not target_health.alive:
+            self.end_combat(attacker, target)
+            if hasattr(attacker, "in_combat_with") and target in attacker.in_combat_with:
+                attacker.in_combat_with.remove(target)
+
+        return True
 
     def end_combat(self, winner, loser):
         """Clean up after combat ends."""
-        # Remove from each other's combat lists
-        if hasattr(winner, 'in_combat_with') and loser in winner.in_combat_with:
+        if hasattr(winner, "in_combat_with") and loser in winner.in_combat_with:
             winner.in_combat_with.remove(loser)
-        if hasattr(loser, 'in_combat_with') and winner in loser.in_combat_with:
+        if hasattr(loser, "in_combat_with") and winner in loser.in_combat_with:
             loser.in_combat_with.remove(winner)
-        
-        # Trigger rewards if player won
-        if isinstance(winner, Player):
-            self.on_enemy_defeated(winner, loser)
 
-    def on_enemy_defeated(self, player, enemy):
-        """Handle loot, XP gain, quest progression."""
-        xp_gain = getattr(enemy, "xp_reward", 20)
-        
-        print(f"[Combat] +{xp_gain} XP gained!")
-        player.xp += xp_gain
-
-        inv = player.get_component(InventoryComponent)
-
-        # Boss guaranteed progression + equipment/material table.
-        if isinstance(enemy, Boss) and inv:
-            if enemy.drop_item:
-                inv.add_item(enemy.drop_item)
-
-            boss_drop_table = getattr(enemy, "drop_table", [])
-            if isinstance(boss_drop_table, str):
-                boss_drops = generate_boss_drops(boss_drop_table)
-            else:
-                boss_drops = boss_drop_table
-            for item in boss_drops:
-                inv.add_item(item)
-            if boss_drops:
-                print(f"[Combat] Loot acquired: {len(boss_drops)} boss-drop items.")
-
-        # Regular enemy drop rolls.
-        if isinstance(enemy, Creature) and inv:
-            regular_drops = generate_regular_enemy_drops(enemy)
-            for item in regular_drops:
-                inv.add_item(item)
-            if regular_drops:
-                print(f"[Combat] Loot acquired: {len(regular_drops)} enemy-drop items.")
-
-        # Level-up logic (now at 50 XP instead of 100)
-        if player.xp >= XP_PER_LEVEL:
-            player.level += 1
-            player.xp -= XP_PER_LEVEL  # Carry over excess XP
-            
-            # Increase stats
-            player_health = player.get_component(HealthComponent)
-            player_stats = player.get_component(StatsComponent)
-            
-            if player_health:
-                player_health.max_hp += LEVEL_HP_GAIN
-                player_health.hp = player_health.max_hp  # Full heal on level up
-            
-            if player_stats:
-                player_stats.attack += LEVEL_ATTACK_GAIN
-                player_stats.defense += LEVEL_DEFENSE_GAIN
-            
-            print(f"[Level Up] 🌟 {player.name} reached level {player.level}!")
-            print(f"  HP: +{LEVEL_HP_GAIN} | ATK: +{LEVEL_ATTACK_GAIN} | DEF: +{LEVEL_DEFENSE_GAIN}")
-    
-    def auto_combat_nearby(self, entity, radius: float = 5.0):
+    def start_combat(self, player, enemies):
         """
-        Automatically attack nearby enemies if cooldown allows.
-        Used for AI entities.
+        Start combat with one or multiple enemies.
         """
-        if not self.can_attack(entity):
-            return
+        if not isinstance(enemies, (list, tuple)):
+            enemies = [enemies]
 
-        entity_pos = entity.get_component(PositionComponent)
-        if not entity_pos:
-            return
+        living_enemies = []
+        for enemy in enemies:
+            health = enemy.get_component(HealthComponent)
+            if health and health.alive:
+                living_enemies.append(enemy)
 
-        # Find nearby targets
-        for biome in self.world.biomes.values():
-            for other in biome.entities:
-                if other == entity or not other.is_alive():
-                    continue
+        if not living_enemies:
+            return False
 
-                other_pos = other.get_component(PositionComponent)
-                if other_pos:
-                    distance = entity_pos.distance_to(other)
-                    if distance <= radius:
-                        # Attack if hostile (you can add faction checks here)
-                        self.attack(entity, other)
-                        break
-
-    def start_combat(self, player, enemy):
-        """
-        Initiate combat state - doesn't block, just marks entities as "in combat".
-        Actual combat happens in update() each frame.
-        """
-        print(f"\n[Combat] ⚔️ {player.name} engages {enemy.name}!")
-        
-        # Mark both entities as in combat
-        if not hasattr(player, 'in_combat_with'):
+        if not hasattr(player, "in_combat_with"):
             player.in_combat_with = []
-        if not hasattr(enemy, 'in_combat_with'):
-            enemy.in_combat_with = []
-        
-        player.in_combat_with.append(enemy)
-        enemy.in_combat_with.append(player)
-        
-        # Trigger boss intro if it's a boss
-        if isinstance(enemy, Boss):
-            enemy.enter_arena()
-        
+        player.in_combat_with = list(living_enemies)
+
+        for enemy in living_enemies:
+            if not hasattr(enemy, "in_combat_with"):
+                enemy.in_combat_with = []
+            if player not in enemy.in_combat_with:
+                enemy.in_combat_with.append(player)
+
+        enemy_names = ", ".join(enemy.name for enemy in living_enemies)
+        print(f"\n[Combat] ⚔️ {player.name} engages {enemy_names}!")
         return True
 
-    def update(self, delta_time: float):
-        """Process all active combats each frame."""
-        # Update cooldowns
-        for entity_id in list(self.attack_cooldowns.keys()):
-            self.attack_cooldowns[entity_id] -= delta_time
-            if self.attack_cooldowns[entity_id] <= 0:
-                del self.attack_cooldowns[entity_id]
-        
-        for entity_id in list(self.defend_cooldowns.keys()):
-            self.defend_cooldowns[entity_id] -= delta_time
-            if self.defend_cooldowns[entity_id] <= 0:
-                del self.defend_cooldowns[entity_id]
-                print(f"[Combat] Defense stance expired.")
-        
-        # Process active combats
-        for entity in self.world.players:
-            if hasattr(entity, 'in_combat_with') and entity.in_combat_with:
-                self.process_combat_for_entity(entity, delta_time)
+    def get_living_enemies(self, player):
+        if not hasattr(player, "in_combat_with"):
+            return []
+        living = []
+        for enemy in player.in_combat_with:
+            health = enemy.get_component(HealthComponent)
+            if health and health.alive:
+                living.append(enemy)
+        player.in_combat_with = living
+        return living
 
-    def process_combat_for_entity(self, entity, delta_time: float):
-        """Handle combat AI for a single entity."""
-        if not hasattr(entity, 'in_combat_with'):
-            return
-        
-        # Remove dead enemies from combat list
-        entity.in_combat_with = [e for e in entity.in_combat_with 
-                                if e.get_component(HealthComponent) 
-                                and e.get_component(HealthComponent).alive]
-        
-        if not entity.in_combat_with:
-            return
-        
-        # Enemies auto-attack on cooldown
-        for enemy in entity.in_combat_with:
-            if self.can_attack(enemy):
-                self.attack(enemy, entity)
+    def remove_dead_combatants(self, player):
+        if not hasattr(player, "in_combat_with"):
+            return []
+        defeated = []
+        living = []
+        for enemy in player.in_combat_with:
+            health = enemy.get_component(HealthComponent)
+            if health and health.alive:
+                living.append(enemy)
+                continue
+            defeated.append(enemy)
+            if hasattr(enemy, "in_combat_with") and player in enemy.in_combat_with:
+                enemy.in_combat_with.remove(player)
+        player.in_combat_with = living
+        return defeated
 
     def defend(self, entity):
         """Entity takes defensive stance."""
@@ -760,6 +695,118 @@ class CombatSystem:
             return True
         
         return False
+
+    def _apply_level_ups(self, player):
+        leveled = 0
+        while player.xp >= XP_PER_LEVEL:
+            player.level += 1
+            player.xp -= XP_PER_LEVEL
+            leveled += 1
+
+            player_health = player.get_component(HealthComponent)
+            player_stats = player.get_component(StatsComponent)
+
+            if player_health:
+                player_health.max_hp += LEVEL_HP_GAIN
+                player_health.hp = player_health.max_hp
+            if player_stats:
+                player_stats.attack += LEVEL_ATTACK_GAIN
+                player_stats.defense += LEVEL_DEFENSE_GAIN
+
+        return leveled
+
+    def _roll_enemy_rewards(self, enemy):
+        reward = {
+            "xp": 0,
+            "gold": 0,
+            "items": [],
+        }
+
+        # XP
+        xp_range = getattr(enemy, "xp_reward_range", None)
+        if isinstance(xp_range, (list, tuple)) and len(xp_range) == 2:
+            reward["xp"] = random.randint(int(xp_range[0]), int(xp_range[1]))
+        else:
+            reward["xp"] = int(getattr(enemy, "xp_reward", 20))
+
+        # Gold
+        gold_range = getattr(enemy, "drop_gold_range", None)
+        if isinstance(gold_range, (list, tuple)) and len(gold_range) == 2:
+            reward["gold"] = random.randint(int(gold_range[0]), int(gold_range[1]))
+
+        # Boss progression item + authored table.
+        if isinstance(enemy, Boss):
+            boss_drop_table = getattr(enemy, "drop_table", [])
+            if isinstance(boss_drop_table, str):
+                reward["items"].extend(generate_boss_drops(boss_drop_table))
+            elif isinstance(boss_drop_table, list):
+                reward["items"].extend(boss_drop_table)
+            return reward
+
+        # Encounter enemy drop table entries.
+        drop_table = getattr(enemy, "drop_table", [])
+        if isinstance(drop_table, list) and drop_table and isinstance(drop_table[0], dict) and "chance" in drop_table[0]:
+            for entry in drop_table:
+                if random.random() > float(entry.get("chance", 0.0)):
+                    continue
+                quantity_range = entry.get("quantity", (1, 1))
+                if isinstance(quantity_range, (list, tuple)) and len(quantity_range) == 2:
+                    quantity = random.randint(int(quantity_range[0]), int(quantity_range[1]))
+                else:
+                    quantity = int(quantity_range)
+
+                item_name = entry.get("item")
+                for _ in range(max(0, quantity)):
+                    item = get_item_by_name(item_name) if item_name else None
+                    if item:
+                        reward["items"].append(item)
+        elif isinstance(enemy, Creature):
+            # Backward compatibility for older generic creatures.
+            reward["items"].extend(generate_regular_enemy_drops(enemy))
+
+        return reward
+
+    def distribute_combat_rewards(self, player, defeated_enemies):
+        inv = player.get_component(InventoryComponent)
+        seen = set()
+        unique_enemies = []
+        for enemy in defeated_enemies:
+            if enemy.id in seen:
+                continue
+            seen.add(enemy.id)
+            unique_enemies.append(enemy)
+
+        summary = {
+            "enemy_names": [enemy.name for enemy in unique_enemies],
+            "enemy_count": len(unique_enemies),
+            "xp": 0,
+            "gold": 0,
+            "items": {},
+            "leveled": 0,
+            "new_elites": [],
+        }
+
+        for enemy in unique_enemies:
+            roll = self._roll_enemy_rewards(enemy)
+            summary["xp"] += int(roll.get("xp", 0))
+            summary["gold"] += int(roll.get("gold", 0))
+
+            for item in roll.get("items", []):
+                item_name = item.get("name", "Unknown Item")
+                summary["items"][item_name] = summary["items"].get(item_name, 0) + 1
+                if inv:
+                    inv.add_item(item)
+
+            if getattr(enemy, "is_elite", False):
+                if enemy.name not in getattr(player, "defeated_elites", []):
+                    player.defeated_elites.append(enemy.name)
+                    summary["new_elites"].append(enemy.name)
+
+        player.xp += summary["xp"]
+        player.gold = getattr(player, "gold", 0) + summary["gold"]
+        player.enemies_slain = getattr(player, "enemies_slain", 0) + summary["enemy_count"]
+        summary["leveled"] = self._apply_level_ups(player)
+        return summary
 
 
 
@@ -818,6 +865,193 @@ class AIController:
 
 
 # ==========================================================
+#                    ENEMY AI CONTROLLER
+# ==========================================================
+
+
+class EnemyAIController:
+    """
+    Pattern-based AI controller for regular and elite encounter enemies.
+    """
+
+    def __init__(self, combat_system):
+        self.combat_system = combat_system
+
+    def _ensure_state(self, enemy):
+        if not hasattr(enemy, "ai_state") or not isinstance(enemy.ai_state, dict):
+            enemy.ai_state = {}
+        enemy.ai_state.setdefault("turn", 0)
+        enemy.ai_state.setdefault("enraged", False)
+        enemy.ai_state.setdefault("pending_fire_burst", False)
+        enemy.ai_state.setdefault("defensive_toggle", False)
+        return enemy.ai_state
+
+    def _attack(self, enemy, player, multiplier=1.0):
+        stats = enemy.get_component(StatsComponent)
+        base_attack = stats.attack if stats else MIN_DAMAGE
+        bonus = float(getattr(enemy, "temporary_attack_bonus", 0.0))
+        raw_damage = max(MIN_DAMAGE, (base_attack + bonus) * multiplier)
+        return self.combat_system.attack(
+            enemy,
+            player,
+            damage=raw_damage,
+            ignore_cooldown=True,
+            apply_cooldown=False,
+        )
+
+    def _apply_status_effect(self, target, name, duration, damage_per_turn=0.0, cooldown_multiplier=1.0, stun=False):
+        status: StatusEffectComponent = target.get_component(StatusEffectComponent)  # type: ignore
+        if not status:
+            return
+        status.add_timed_effect(
+            name=name,
+            duration=duration,
+            damage_per_turn=damage_per_turn,
+            cooldown_multiplier=cooldown_multiplier,
+            stun=stun,
+        )
+
+    def execute_pattern(self, enemy, player, combat_state):
+        """
+        Executes one AI turn for an enemy.
+        Returns a list of combat log lines.
+        """
+        logs = []
+        health = enemy.get_component(HealthComponent)
+        if not health or not health.alive:
+            return logs
+
+        state = self._ensure_state(enemy)
+        state["turn"] += 1
+        pattern = getattr(enemy, "ai_pattern", "Aggressive")
+
+        # Reset counter by default; specific patterns re-enable it.
+        enemy.counter_reflect = 0.0
+
+        if pattern == "Aggressive":
+            if self._attack(enemy, player):
+                logs.append(f"{enemy.name} lunges with relentless aggression.")
+
+        elif pattern == "Defensive":
+            if state["turn"] % 2 == 0:
+                self.combat_system.defend(enemy)
+                logs.append(f"{enemy.name} braces behind twisted bark.")
+            else:
+                if self._attack(enemy, player):
+                    logs.append(f"{enemy.name} strikes between guarded breaths.")
+
+        elif pattern == "Poison Attacker":
+            if self._attack(enemy, player):
+                self._apply_status_effect(player, "Poison", duration=3, damage_per_turn=3.0)
+                logs.append(f"{enemy.name} inflicts poison!")
+
+        elif pattern == "Phase Shifter":
+            cycle = (state["turn"] - 1) % 3
+            if cycle in (0, 1):
+                self.combat_system.defend(enemy)
+                logs.append(f"{enemy.name} fades into a guarded phase.")
+            else:
+                if self._attack(enemy, player, multiplier=1.6):
+                    logs.append(f"{enemy.name} erupts from phase with a heavy strike.")
+
+        elif pattern == "Tank":
+            if self._attack(enemy, player):
+                logs.append(f"{enemy.name} crushes forward.")
+            regen_amount = 5.0
+            health.heal(regen_amount)
+            logs.append(f"{enemy.name} regenerates {regen_amount:.0f} HP.")
+
+        elif pattern == "Burn Aura":
+            player_health = player.get_component(HealthComponent)
+            if player_health and player_health.alive:
+                player_health.take_damage(2, source=enemy)
+                logs.append(f"{enemy.name}'s burn aura scorches you (2).")
+            if self._attack(enemy, player):
+                logs.append(f"{enemy.name} bites through the flame haze.")
+
+        elif pattern == "Heavy Hitter":
+            if state["turn"] % 2 == 0:
+                if self._attack(enemy, player, multiplier=2.0):
+                    logs.append(f"{enemy.name} lands a crushing heavy blow!")
+            else:
+                self.combat_system.defend(enemy)
+                logs.append(f"{enemy.name} gathers force for a heavy strike.")
+
+        elif pattern == "Fire Burst":
+            if state.get("pending_fire_burst", False):
+                everyone = [player] + [e for e in combat_state.get("enemies", []) if e != player and e.is_alive()]
+                for unit in everyone:
+                    self._apply_status_effect(unit, "Burn", duration=3, damage_per_turn=5.0)
+                logs.append(f"{enemy.name} detonates a fire burst and ignites everyone!")
+                state["pending_fire_burst"] = False
+            else:
+                if self._attack(enemy, player):
+                    logs.append(f"{enemy.name} brands the battlefield with embers.")
+                state["pending_fire_burst"] = True
+
+        elif pattern == "Slow Effect":
+            if self._attack(enemy, player):
+                self._apply_status_effect(player, "Slow", duration=2, cooldown_multiplier=1.5)
+                logs.append(f"{enemy.name} chills your movements (Slow).")
+
+        elif pattern == "Counter":
+            self.combat_system.defend(enemy)
+            enemy.counter_reflect = 0.5
+            logs.append(f"{enemy.name} enters counter stance.")
+
+        elif pattern == "Freeze Slam":
+            if self._attack(enemy, player):
+                logs.append(f"{enemy.name} slams with glacial force.")
+                if random.random() < 0.30:
+                    self._apply_status_effect(player, "Stun", duration=1, stun=True)
+                    logs.append(f"{enemy.name} stuns you!")
+
+        elif pattern == "Adaptive":
+            player_action = combat_state.get("player_last_action", "attack")
+            if player_action in ("defend", "d"):
+                self.combat_system.defend(enemy)
+                logs.append(f"{enemy.name} mirrors your defense.")
+            else:
+                if self._attack(enemy, player):
+                    logs.append(f"{enemy.name} mirrors your offense.")
+
+        elif pattern == "Drain":
+            if self._attack(enemy, player):
+                heal_amount = 10.0
+                health.heal(heal_amount)
+                logs.append(f"{enemy.name} drains life and restores {heal_amount:.0f} HP.")
+
+        elif pattern == "Phase 2":
+            if (not state.get("enraged", False)) and health.hp <= (health.max_hp * 0.5):
+                state["enraged"] = True
+                enemy.temporary_attack_bonus = float(getattr(enemy, "temporary_attack_bonus", 0.0)) + 10.0
+                logs.append(f"{enemy.name} enrages and its power surges!")
+
+            attack_count = 2 if state.get("enraged", False) else 1
+            for i in range(attack_count):
+                if self._attack(enemy, player):
+                    if attack_count == 2:
+                        logs.append(f"{enemy.name} unleashes enraged strike {i + 1}!")
+                    else:
+                        logs.append(f"{enemy.name} attacks.")
+                if not player.get_component(HealthComponent).alive:
+                    break
+
+        elif pattern == "Fast Attacker":
+            for i in range(2):
+                if self._attack(enemy, player):
+                    logs.append(f"{enemy.name} rapid-strikes ({i + 1}/2)!")
+                if not player.get_component(HealthComponent).alive:
+                    break
+
+        else:
+            if self._attack(enemy, player):
+                logs.append(f"{enemy.name} attacks.")
+
+        return logs
+
+
+# ==========================================================
 #                       SAVE SYSTEM
 # ==========================================================
 
@@ -857,6 +1091,10 @@ class SaveSystem:
                 "biome": getattr(getattr(player, "biome", None), "name", "Sacred Wilds"),
                 "discovered_biomes": list(getattr(player, "discovered_biomes", set())),
                 "defeated_bosses": getattr(player, "defeated_bosses", []),
+                "defeated_elites": getattr(player, "defeated_elites", []),
+                "seen_enemies": list(getattr(player, "seen_enemies", set())),
+                "gold": getattr(player, "gold", 0),
+                "enemies_slain": getattr(player, "enemies_slain", 0),
                 "playtime": int(getattr(player, "playtime", 0)),
                 "health": {
                     "hp": getattr(health, "hp", 0),

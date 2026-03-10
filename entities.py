@@ -189,21 +189,99 @@ class MagicAffinityComponent(Component):
 class StatusEffectComponent(Component):
     def __init__(self, owner):
         super().__init__(owner)
-        self.effects: Dict[str, int] = {}  # effect -> remaining ticks
+        # effect_name -> payload dict
+        self.effects: Dict[str, Dict[str, Any]] = {}
 
     def add_effect(self, name: str, duration: int):
-        self.effects[name] = max(self.effects.get(name, 0), duration)
-        print(f"[{self.owner.name}] gains status effect: {name} ({duration} ticks)")
+        """Backward-compatible lightweight effect add."""
+        self.add_timed_effect(name=name, duration=duration)
+
+    def add_timed_effect(
+        self,
+        name: str,
+        duration: int,
+        damage_per_turn: float = 0.0,
+        cooldown_multiplier: float = 1.0,
+        stun: bool = False,
+        metadata: Dict[str, Any] = None,
+    ):
+        current = self.effects.get(name)
+        if current and int(current.get("duration", 0)) >= duration:
+            return
+        self.effects[name] = {
+            "duration": max(1, int(duration)),
+            "damage_per_turn": float(damage_per_turn),
+            "cooldown_multiplier": float(cooldown_multiplier),
+            "stun": bool(stun),
+            "metadata": dict(metadata or {}),
+        }
+        print(f"[{self.owner.name}] gains status effect: {name} ({duration} turns)")
+
+    def has_effect(self, name: str) -> bool:
+        return name in self.effects and int(self.effects[name].get("duration", 0)) > 0
+
+    def get_effect_duration(self, name: str) -> int:
+        if name not in self.effects:
+            return 0
+        return int(self.effects[name].get("duration", 0))
+
+    def get_cooldown_multiplier(self) -> float:
+        multiplier = 1.0
+        for payload in self.effects.values():
+            multiplier = max(multiplier, float(payload.get("cooldown_multiplier", 1.0)))
+        return multiplier
+
+    def active_effect_labels(self):
+        labels = []
+        for name, payload in self.effects.items():
+            duration = int(payload.get("duration", 0))
+            if duration <= 0:
+                continue
+            labels.append((name, duration))
+        return labels
+
+    def process_turn_start(self):
+        """
+        Apply per-turn effect logic.
+        Returns:
+            dict(messages=list[str], stunned=bool)
+        """
+        messages = []
+        stunned = False
+        health: HealthComponent = self.owner.get_component(HealthComponent)  # type: ignore
+
+        expired = []
+        for name, payload in list(self.effects.items()):
+            duration = int(payload.get("duration", 0))
+            if duration <= 0:
+                expired.append(name)
+                continue
+
+            damage = float(payload.get("damage_per_turn", 0.0))
+            if damage > 0 and health and health.alive:
+                health.take_damage(damage, source=None)
+                messages.append(f"{self.owner.name} suffers {damage:.1f} from {name}.")
+
+            if bool(payload.get("stun", False)):
+                stunned = True
+                messages.append(f"{self.owner.name} is stunned!")
+
+            payload["duration"] = duration - 1
+            if int(payload["duration"]) <= 0:
+                expired.append(name)
+
+        for name in expired:
+            self.effects.pop(name, None)
+            messages.append(f"{self.owner.name}'s {name} expired.")
+
+        return {
+            "messages": messages,
+            "stunned": stunned,
+        }
 
     def update(self):
-        remove = []
-        for name in list(self.effects.keys()):
-            self.effects[name] -= 1
-            if self.effects[name] <= 0:
-                remove.append(name)
-        for name in remove:
-            self.effects.pop(name, None)
-            print(f"[{self.owner.name}] status effect expired: {name}")
+        # Effects are processed at turn start by combat systems.
+        pass
 
 
 class StatsComponent(Component):
@@ -497,6 +575,11 @@ class Player(AliveEntity):
         super().__init__(name, max_hp=PLAYER_START_HP)
         self.xp = 0
         self.level = 1
+        self.gold = 0
+        self.defeated_elites = []
+        self.enemies_slain = 0
+        self.known_recipes = set()
+        self.last_action = "idle"
         self.add_component(InventoryComponent(self, capacity=30))
         self.add_component(StatsComponent(
             self,

@@ -18,6 +18,7 @@ This spec defines the ECS-style domain model in `entities.py`.
 - `DialogueComponent`: scripted line retrieval by key.
 - `MagicAffinityComponent`: element-to-strength mapping.
 - `StatusEffectComponent`: timed effects and expiry.
+  - Supports typed effects (poison, burn, slow, stun) with per-turn processing and metadata payloads.
 - `StatsComponent`: attack/defense/stamina and passive stamina regen.
 
 3. AI components
@@ -39,7 +40,7 @@ This spec defines the ECS-style domain model in `entities.py`.
 3. Concrete entities
 - `Player`
   - Adds `InventoryComponent`, `StatsComponent`, and `EquipmentComponent`.
-  - Maintains `xp`, `level`.
+  - Maintains `xp`, `level`, `gold`, and encounter progression markers (`defeated_elites`, `seen_enemies`, `enemies_slain`).
   - Uses config defaults for base stats.
 - `NPC`
   - Dialogue helper that can branch on player inventory.

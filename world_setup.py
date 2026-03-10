@@ -7,7 +7,7 @@ from copy import deepcopy
 import random
 
 from core_engine import Biome, World
-from entities import Boss, Creature, PositionComponent, StatsComponent
+from entities import Boss, Creature, PositionComponent, StatsComponent, AIComponent
 from config import (
     BOSS_1_HP, BOSS_2_HP, BOSS_3_HP, BOSS_4_HP, BOSS_5_HP,
     PLAYER_START_ATTACK, PLAYER_START_DEFENSE, BOSS_ATTACK_MULTIPLIER, BOSS_DEFENSE_MULTIPLIER,
@@ -130,6 +130,27 @@ MATERIALS = [
     _item("Cathedral Shard", "material", "epic"),
     _item("Soulflame Thread", "material", "epic"),
     _item("Worldseed Fragment", "material", "legendary"),
+    _item("Wolf Fang", "material", "common"),
+    _item("Corrupted Hide", "material", "common"),
+    _item("Ancient Bark", "material", "common"),
+    _item("Healing Herb", "material", "common"),
+    _item("Rare Wolf Pelt", "material", "rare"),
+    _item("Rotten Flesh", "material", "common"),
+    _item("Decay Spore", "material", "uncommon"),
+    _item("Drowned Pearl", "material", "uncommon"),
+    _item("Ethereal Essence", "material", "rare"),
+    _item("Titan's Heart", "material", "rare"),
+    _item("Magma Stone", "material", "uncommon"),
+    _item("Molten Core", "material", "rare"),
+    _item("Obsidian Shard", "material", "uncommon"),
+    _item("Warden's Core", "material", "epic"),
+    _item("Frozen Fang", "material", "rare"),
+    _item("Ice Shard", "material", "uncommon"),
+    _item("Behemoth Heart", "material", "epic"),
+    _item("Ash Rune", "material", "rare"),
+    _item("Decayed Metal", "material", "uncommon"),
+    _item("Essence of Decay", "material", "epic"),
+    _item("Guardian's Seal", "material", "legendary"),
 ]
 
 ITEM_DATABASE = {
@@ -169,6 +190,270 @@ BOSS_DROP_TABLES = {
     "Archon of Decay": {
         "guaranteed_equipment": ["Verdance Oathbreaker", "Aegis of Rebirth"],
         "material_pool": ["Cathedral Shard", "Worldseed Fragment", "Soulflame Thread", "Frost Crystal"],
+    },
+}
+
+
+ENEMY_DATABASE = {
+    "Sacred Wilds": {
+        "regular": [
+            {
+                "name": "Corrupted Wolf",
+                "hp": 25,
+                "attack": 8,
+                "defense": 2,
+                "ai_pattern": "Aggressive",
+                "drops": {
+                    "Wolf Fang": 0.80,
+                    "Corrupted Hide": 0.40,
+                    "gold": (10, 20),
+                },
+                "xp": (10, 18),
+                "description": "A forest predator twisted by decay.",
+                "respawn": True,
+                "is_elite": False,
+            },
+            {
+                "name": "Hollow Dryad",
+                "hp": 20,
+                "attack": 10,
+                "defense": 3,
+                "ai_pattern": "Defensive",
+                "drops": {
+                    "Ancient Bark": 0.60,
+                    "Healing Herb": 0.30,
+                    "gold": (15, 25),
+                },
+                "xp": (12, 20),
+                "description": "A nature spirit consumed by corruption.",
+                "respawn": True,
+                "is_elite": False,
+            },
+        ],
+        "elite": {
+            "name": "Alpha Rot Wolf",
+            "hp": 60,
+            "attack": 12,
+            "defense": 4,
+            "ai_pattern": "Fast Attacker",
+            "drops": {
+                "Rare Wolf Pelt": 1.00,
+                "Wolf Fang": {"chance": 1.00, "quantity": (3, 3)},
+                "gold": (50, 50),
+            },
+            "xp": (50, 65),
+            "description": "Pack leader, fiercer and faster than its kin.",
+            "respawn": False,
+            "is_elite": True,
+        },
+    },
+    "Drowned Vale": {
+        "regular": [
+            {
+                "name": "Rotspawn",
+                "hp": 40,
+                "attack": 13,
+                "defense": 5,
+                "ai_pattern": "Poison Attacker",
+                "drops": {
+                    "Rotten Flesh": 0.70,
+                    "Decay Spore": 0.50,
+                    "gold": (20, 35),
+                },
+                "xp": (15, 24),
+                "description": "Bloated corpse animated by swamp magic.",
+                "respawn": True,
+                "is_elite": False,
+            },
+            {
+                "name": "Drowned Wraith",
+                "hp": 35,
+                "attack": 15,
+                "defense": 4,
+                "ai_pattern": "Phase Shifter",
+                "drops": {
+                    "Drowned Pearl": 0.40,
+                    "Ethereal Essence": 0.30,
+                    "gold": (25, 40),
+                },
+                "xp": (15, 25),
+                "description": "Lost soul bound to the waterlogged depths.",
+                "respawn": True,
+                "is_elite": False,
+            },
+        ],
+        "elite": {
+            "name": "Bloated Titan",
+            "hp": 100,
+            "attack": 18,
+            "defense": 7,
+            "ai_pattern": "Tank",
+            "drops": {
+                "Titan's Heart": 1.00,
+                "Rotten Flesh": {"chance": 1.00, "quantity": (5, 5)},
+                "gold": (80, 80),
+            },
+            "xp": (65, 80),
+            "description": "Massive undead colossus, nearly indestructible.",
+            "respawn": False,
+            "is_elite": True,
+        },
+    },
+    "Molten Crypt": {
+        "regular": [
+            {
+                "name": "Ember Hound",
+                "hp": 55,
+                "attack": 17,
+                "defense": 6,
+                "ai_pattern": "Burn Aura",
+                "drops": {
+                    "Ember Core": 0.60,
+                    "Magma Stone": 0.40,
+                    "gold": (30, 50),
+                },
+                "xp": (18, 30),
+                "description": "Volcanic beast wreathed in living flame.",
+                "respawn": True,
+                "is_elite": False,
+            },
+            {
+                "name": "Cinder Golem",
+                "hp": 65,
+                "attack": 16,
+                "defense": 9,
+                "ai_pattern": "Heavy Hitter",
+                "drops": {
+                    "Molten Core": 0.50,
+                    "Obsidian Shard": 0.35,
+                    "gold": (35, 55),
+                },
+                "xp": (20, 32),
+                "description": "Stone construct animated by molten heat.",
+                "respawn": True,
+                "is_elite": False,
+            },
+        ],
+        "elite": {
+            "name": "Inferno Warden",
+            "hp": 130,
+            "attack": 22,
+            "defense": 10,
+            "ai_pattern": "Fire Burst",
+            "drops": {
+                "Warden's Core": 1.00,
+                "Molten Core": {"chance": 1.00, "quantity": (4, 4)},
+                "gold": (100, 100),
+            },
+            "xp": (75, 90),
+            "description": "Guardian of the volcanic depths, consumed by eternal fire.",
+            "respawn": False,
+            "is_elite": True,
+        },
+    },
+    "Frostspire Peaks": {
+        "regular": [
+            {
+                "name": "Frost Wraith",
+                "hp": 75,
+                "attack": 24,
+                "defense": 8,
+                "ai_pattern": "Slow Effect",
+                "drops": {
+                    "Frost Crystal": 0.65,
+                    "Ethereal Essence": 0.45,
+                    "gold": (40, 65),
+                },
+                "xp": (22, 35),
+                "description": "Spectral entity from the frozen wastes.",
+                "respawn": True,
+                "is_elite": False,
+            },
+            {
+                "name": "Ice Stalker",
+                "hp": 80,
+                "attack": 20,
+                "defense": 11,
+                "ai_pattern": "Counter",
+                "drops": {
+                    "Frozen Fang": 0.55,
+                    "Ice Shard": 0.40,
+                    "gold": (45, 70),
+                },
+                "xp": (24, 36),
+                "description": "Predator adapted to glacial hunting.",
+                "respawn": True,
+                "is_elite": False,
+            },
+        ],
+        "elite": {
+            "name": "Glacial Behemoth",
+            "hp": 160,
+            "attack": 28,
+            "defense": 14,
+            "ai_pattern": "Freeze Slam",
+            "drops": {
+                "Behemoth Heart": 1.00,
+                "Frost Crystal": {"chance": 1.00, "quantity": (5, 5)},
+                "gold": (130, 130),
+            },
+            "xp": (85, 100),
+            "description": "Ancient ice giant, slow but devastating.",
+            "respawn": False,
+            "is_elite": True,
+        },
+    },
+    "Cathedral of Ash": {
+        "regular": [
+            {
+                "name": "Ash Sentinel",
+                "hp": 100,
+                "attack": 32,
+                "defense": 15,
+                "ai_pattern": "Adaptive",
+                "drops": {
+                    "Ash Rune": 0.70,
+                    "Decayed Metal": 0.50,
+                    "gold": (55, 85),
+                },
+                "xp": (28, 40),
+                "description": "Corrupted guardian, mirroring all who oppose it.",
+                "respawn": True,
+                "is_elite": False,
+            },
+            {
+                "name": "Decay Horror",
+                "hp": 110,
+                "attack": 30,
+                "defense": 16,
+                "ai_pattern": "Drain",
+                "drops": {
+                    "Essence of Decay": 0.40,
+                    "Decay Spore": 0.60,
+                    "gold": (60, 90),
+                },
+                "xp": (30, 42),
+                "description": "Manifestation of pure rot, feeding on life itself.",
+                "respawn": True,
+                "is_elite": False,
+            },
+        ],
+        "elite": {
+            "name": "Cathedral Guardian",
+            "hp": 200,
+            "attack": 36,
+            "defense": 18,
+            "ai_pattern": "Phase 2",
+            "drops": {
+                "Guardian's Seal": 1.00,
+                "Essence of Decay": {"chance": 1.00, "quantity": (6, 6)},
+                "gold": (180, 180),
+            },
+            "xp": (95, 120),
+            "description": "Last line of defense before the Archon's throne.",
+            "respawn": False,
+            "is_elite": True,
+        },
     },
 }
 
@@ -260,6 +545,115 @@ def generate_regular_enemy_drops(enemy):
         })
 
     return [item for item in drops if item]
+
+
+def get_biome_enemy_definitions(biome_name):
+    block = ENEMY_DATABASE.get(biome_name, {})
+    regular = block.get("regular", [])
+    elite = block.get("elite", {})
+    return {
+        "regular": deepcopy(regular),
+        "elite": deepcopy(elite) if isinstance(elite, dict) else {},
+    }
+
+
+def create_enemy_from_data(enemy_data, biome):
+    """Build a fresh encounter enemy instance from ENEMY_DATABASE payload."""
+    enemy_def = enemy_data or {}
+    enemy = Creature(name=enemy_def.get("name", "Unknown Enemy"), max_hp=float(enemy_def.get("hp", 30)))
+    stats = enemy.get_component(StatsComponent)
+    if not stats:
+        enemy.add_component(StatsComponent(enemy, attack=enemy_def.get("attack", 8), defense=enemy_def.get("defense", 2)))
+        stats = enemy.get_component(StatsComponent)
+    if stats:
+        stats.attack = float(enemy_def.get("attack", 8))
+        stats.defense = float(enemy_def.get("defense", 2))
+
+    enemy.ai_pattern = enemy_def.get("ai_pattern", enemy_def.get("pattern", "Aggressive"))
+    ai_comp = enemy.get_component(AIComponent)
+    if ai_comp:
+        ai_comp.pattern = enemy.ai_pattern
+    enemy.enemy_description = enemy_def.get("description", "")
+    enemy.drop_table = []
+    drops = deepcopy(enemy_def.get("drops", {}))
+    gold_range = drops.pop("gold", enemy_def.get("gold", (8, 20)))
+    for item_name, drop_meta in drops.items():
+        if isinstance(drop_meta, dict):
+            chance = float(drop_meta.get("chance", 0.0))
+            quantity = tuple(drop_meta.get("quantity", (1, 1)))
+        else:
+            chance = float(drop_meta)
+            quantity = (1, 1)
+        enemy.drop_table.append({
+            "item": item_name,
+            "chance": chance,
+            "quantity": quantity,
+        })
+
+    enemy.drop_gold_range = tuple(gold_range)
+    enemy.xp_reward_range = tuple(enemy_def.get("xp", (10, 20)))
+    enemy.respawn = bool(enemy_def.get("respawn", True))
+    enemy.is_elite = bool(enemy_def.get("is_elite", enemy_def.get("elite", False)))
+    enemy.enemy_tier = "elite" if enemy.is_elite else "regular"
+    enemy.is_regular_enemy = True
+    enemy.ai_state = {"turn": 0, "enraged": False, "pending_fire_burst": False}
+    enemy.counter_reflect = 0.0
+
+    if enemy.is_elite:
+        enemy.tags.add("elite")
+    enemy.tags.add("encounter_enemy")
+
+    # Attach to biome context without permanently adding to biome entity list.
+    enemy.set_biome(biome)
+    enemy.add_component(PositionComponent(enemy, x=random.randint(4, 16), y=random.randint(4, 16)))
+    return enemy
+
+
+def create_enemy_from_definition(enemy_def, biome):
+    """Backward-compatible alias."""
+    return create_enemy_from_data(enemy_def, biome)
+
+
+def generate_random_enemies(biome_name, count, biome=None):
+    """Generate N regular enemies for a biome."""
+    definitions = get_biome_enemy_definitions(biome_name)
+    regular_pool = definitions.get("regular", [])
+    if not regular_pool:
+        return []
+
+    biome_ref = biome
+    if biome_ref is None:
+        w = build_world()
+        biome_ref = w.get_biome(biome_name)
+    if biome_ref is None:
+        return []
+
+    enemies = []
+    for _ in range(max(1, int(count))):
+        selected = random.choice(regular_pool)
+        enemies.append(create_enemy_from_data(selected, biome_ref))
+    return enemies
+
+
+def generate_elite_enemy(biome_name, defeated_elites=None, biome=None):
+    """Generate biome elite unless already defeated."""
+    definitions = get_biome_enemy_definitions(biome_name)
+    elite_def = definitions.get("elite", {})
+    if not elite_def:
+        return None
+
+    defeated_elites = defeated_elites or []
+    if elite_def.get("name") in defeated_elites:
+        return None
+
+    biome_ref = biome
+    if biome_ref is None:
+        w = build_world()
+        biome_ref = w.get_biome(biome_name)
+    if biome_ref is None:
+        return None
+
+    return create_enemy_from_data(elite_def, biome_ref)
 
 
 def build_world():
@@ -396,13 +790,5 @@ def build_world():
     final_boss.xp_reward = 100
     final_boss.drop_table = "Archon of Decay"
     cathedral_ruins.add_entity(final_boss)
-
-    # Optional regular enemy stubs for material/common loot loops.
-    for i in range(2):
-        wolf = Creature(name=f"Wild Thornling {i + 1}", max_hp=40.0)
-        wolf.add_component(StatsComponent(wolf, attack=8.0, defense=2.0))
-        wolf.add_component(PositionComponent(wolf, x=12 + i, y=11 + i))
-        wolf.xp_reward = 12
-        sacred_wilds.add_entity(wolf)
 
     return world

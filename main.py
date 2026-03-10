@@ -12,14 +12,21 @@ from rich.live import Live
 console = Console()
 
 import time
-from world_setup import build_world, get_item_by_name
+import random
+from world_setup import (
+    build_world,
+    get_item_by_name,
+    generate_random_enemies,
+    generate_elite_enemy,
+)
 from systems import (
     EventSystem, DialogueSystem, QuestSystem,
-    InventorySystem, CombatSystem, AIController, Quest, SaveSystem, CraftingSystem
+    InventorySystem, CombatSystem, AIController, EnemyAIController,
+    Quest, SaveSystem, CraftingSystem
 )
 from entities import (
     Player, PositionComponent, InventoryComponent, HealthComponent,
-    Boss, Creature, NPC, StatsComponent, EquipmentComponent
+    Boss, Creature, NPC, StatsComponent, EquipmentComponent, StatusEffectComponent
 )
 
 # ============================================================
@@ -65,6 +72,7 @@ crafting_system = CraftingSystem(world)
 combat_system = CombatSystem(world)
 ai_controller = AIController(world)
 ai_controller.combat_system = combat_system  # Link combat system to AI
+enemy_ai_controller = EnemyAIController(combat_system)
 save_system = SaveSystem()
 
 player = None
@@ -230,6 +238,10 @@ def start_new_game():
     new_player = Player("Ashen Wanderer")
     new_player.add_component(PositionComponent(new_player, x=0, y=0))
     new_player.defeated_bosses = []
+    new_player.defeated_elites = []
+    new_player.enemies_slain = 0
+    new_player.gold = 0
+    new_player.seen_enemies = set()
     new_player.playtime = 0
 
     start_biome = world.get_biome("Sacred Wilds")
@@ -264,6 +276,11 @@ def load_player_from_save(save_data, world):
         loaded_player.level = save_data.get("level", 1)
         loaded_player.xp = save_data.get("xp", 0)
         loaded_player.defeated_bosses = save_data.get("defeated_bosses", [])
+        loaded_player.defeated_elites = save_data.get("defeated_elites", [])
+        loaded_player.enemies_slain = save_data.get("enemies_slain", 0)
+        loaded_player.gold = save_data.get("gold", 0)
+        legacy_seen = save_data.get("seen_enemy_descriptions", [])
+        loaded_player.seen_enemies = set(save_data.get("seen_enemies", legacy_seen))
         loaded_player.discovered_biomes = set(save_data.get("discovered_biomes", []))
         loaded_player.playtime = save_data.get("playtime", 0)
 
@@ -733,6 +750,7 @@ def show_status():
     # Add rows
     table.add_row("Level", f"{player.level}")
     table.add_row("XP", f"{player.xp}/50")
+    table.add_row("Gold", f"{getattr(player, 'gold', 0)}")
     
     if health:
         hp_percent = (health.hp / health.max_hp) * 100
@@ -751,6 +769,7 @@ def show_status():
         table.add_row("Position", f"({pos.x:.1f}, {pos.y:.1f})")
     
     table.add_row("Location", f"[bold yellow]{player.biome.name if hasattr(player, 'biome') else 'Unknown'}[/bold yellow]")
+    table.add_row("Enemies Slain", f"{getattr(player, 'enemies_slain', 0)}")
     if equipment:
         equipped_count = 0
         for slot in EQUIPMENT_SLOTS:
@@ -764,44 +783,194 @@ def show_status():
     console.print(table)
     time.sleep(0.4)
 
+
+def get_effect_badges(entity):
+    """Return rich-formatted status effect badges for combat UI."""
+    status: StatusEffectComponent = entity.get_component(StatusEffectComponent)  # type: ignore
+    if not status:
+        return "[dim]None[/dim]"
+
+    labels = status.active_effect_labels()
+    if not labels:
+        return "[dim]None[/dim]"
+
+    icons = {
+        "poison": "🧪",
+        "burn": "🔥",
+        "slow": "❄️",
+        "stun": "💫",
+    }
+    parts = []
+    for effect_name, turns in labels:
+        key = effect_name.lower()
+        icon = icons.get(key, "•")
+        parts.append(f"{icon} {effect_name} ({turns}t)")
+    return " ".join(parts)
+
+
+def process_turn_status(entity):
+    """Apply status-effect turn ticks and return if entity is stunned."""
+    status: StatusEffectComponent = entity.get_component(StatusEffectComponent)  # type: ignore
+    if not status:
+        return False
+    result = status.process_turn_start()
+    for msg in result.get("messages", []):
+        console.print(f"[dim]{msg}[/dim]")
+        time.sleep(0.2)
+    return bool(result.get("stunned", False))
+
+
+def spawn_enemy_encounter(count):
+    """Spawn regular enemies for the current biome."""
+    biome_name = player.biome.name
+    enemies = generate_random_enemies(biome_name, count, biome=player.biome)
+    if not enemies:
+        return False
+
+    names = [enemy.name for enemy in enemies]
+    if len(enemies) == 1:
+        console.print(f"[red]⚔️ {names[0]} stalks your path![/red]")
+    elif len(set(names)) == 1:
+        console.print(f"[red]⚔️ {len(enemies)} {names[0]}s emerge from the shadows![/red]")
+    else:
+        console.print(f"[red]⚔️ Enemies emerge: {', '.join(names)}[/red]")
+
+    show_enemy_descriptions_once(enemies)
+    time.sleep(0.5)
+    combat_system.start_combat(player, enemies)
+    player.current_combat_defeated = []
+    return True
+
+
+def spawn_elite_encounter():
+    """Spawn elite encounter for biome, fallback to regular pack if already defeated."""
+    biome_name = player.biome.name
+    elite = generate_elite_enemy(
+        biome_name,
+        defeated_elites=getattr(player, "defeated_elites", []),
+        biome=player.biome,
+    )
+    if elite is None:
+        console.print("[dim]No elite stirs here anymore. Lesser foes close in instead...[/dim]")
+        time.sleep(0.4)
+        return spawn_enemy_encounter(2)
+
+    console.print(f"[bold red]👑 Elite Encounter: {elite.name}![/bold red]")
+    show_enemy_descriptions_once([elite])
+    time.sleep(0.5)
+    combat_system.start_combat(player, [elite])
+    player.current_combat_defeated = []
+    return True
+
+
+def show_enemy_descriptions_once(enemies):
+    """Display enemy descriptions first time encountered in this session."""
+    if not hasattr(player, "seen_enemies"):
+        legacy_seen = getattr(player, "seen_enemy_descriptions", set())
+        player.seen_enemies = set(legacy_seen)
+
+    for enemy in enemies:
+        if enemy.name in player.seen_enemies:
+            continue
+        description = getattr(enemy, "enemy_description", "")
+        if description:
+            console.print(f"[dim]{enemy.name}: {description}[/dim]")
+            time.sleep(0.4)
+        player.seen_enemies.add(enemy.name)
+
+def boss_encounter():
+    """Challenge the area boss directly."""
+    if not hasattr(player, "biome") or player.biome is None:
+        console.print("[red]You are not in a valid biome.[/red]")
+        return False
+
+    boss = None
+    for entity in player.biome.entities:
+        if isinstance(entity, Boss):
+            boss = entity
+            break
+
+    if boss is None:
+        console.print("[yellow]There is no boss in this area.[/yellow]")
+        time.sleep(0.5)
+        return False
+
+    boss_health = boss.get_component(HealthComponent)
+    if not boss_health or not boss_health.alive:
+        console.print(f"[green]You have already defeated {boss.name}.[/green]")
+        time.sleep(0.5)
+        return False
+
+    console.print()
+    typewriter(f"You approach the domain of {boss.name}...", delay=0.04, color="bold red")
+    time.sleep(0.8)
+    boss.enter_arena()
+    combat_system.start_combat(player, [boss])
+    player.current_combat_defeated = []
+    return True
+
+
+def show_biome_info():
+    """Display current biome overview and boss status."""
+    if not hasattr(player, "biome") or player.biome is None:
+        console.print("[red]Biome data unavailable.[/red]")
+        return
+
+    biome = player.biome
+    table = Table(title="[bold cyan]Area Info[/bold cyan]", box=box.ROUNDED)
+    table.add_column("Field", style="cyan")
+    table.add_column("Value", style="white")
+    table.add_row("Biome", f"[yellow]{biome.name}[/yellow]")
+    table.add_row("Description", biome.description)
+    table.add_row("Danger", str(biome.danger_level))
+
+    boss = None
+    for entity in biome.entities:
+        if isinstance(entity, Boss):
+            boss = entity
+            break
+
+    if boss:
+        boss_health = boss.get_component(HealthComponent)
+        if boss_health and boss_health.alive:
+            table.add_row("Boss", f"[red]{boss.name} (Alive)[/red] - use [bold]boss[/bold] to challenge")
+        else:
+            table.add_row("Boss", f"[green]{boss.name} (Defeated)[/green]")
+    else:
+        table.add_row("Boss", "[dim]None in this area[/dim]")
+
+    console.print(table)
+    time.sleep(0.4)
+
+
 def explore_biome():
-    """Trigger interactions with entities in current biome."""
+    """Explore biome for NPC dialogue and farmable enemy encounters."""
     if not hasattr(player, 'biome'):
         console.print("[bold red][Error][/bold red] Player is not in any biome!")
         return True
     
     console.print(f"\n[cyan]🔍 Exploring {player.biome.name}...[/cyan]")
     time.sleep(0.5)
-    
+
+    # NPC dialogue only during exploration.
     for entity in player.biome.entities:
-        if entity == player:
+        if entity == player or isinstance(entity, Boss):
             continue
-        
-        # Check if it's an NPC
-        if hasattr(entity, 'get_dialogue'):
-            time.sleep(0.3)
+        if hasattr(entity, "get_dialogue"):
             dialogue_system.start_dialogue(entity, player)
-            time.sleep(0.5)
-        
-        # Check if it's a boss
-        elif isinstance(entity, Boss):
-            health = entity.get_component(HealthComponent)
-            if health and health.alive:
-                console.print()
-                time.sleep(0.3)
-                typewriter(f"⚔️  {entity.name} blocks your path!", delay=0.04, color="bold red")
-                time.sleep(0.8)
-                
-                # Boss intro with typewriter
-                if hasattr(entity, 'dialogue') and 'intro' in entity.dialogue:
-                    console.print()
-                    typewriter(f'"{entity.dialogue["intro"]}"', delay=0.035, color="red")
-                    time.sleep(1.0)
-                
-                combat_system.start_combat(player, entity)
-                return True  # Return to main loop for combat commands
-    
-    return True
+            time.sleep(0.3)
+
+    if random.random() > 0.50:
+        console.print("[dim]The area is quiet...[/dim]")
+        time.sleep(0.5)
+        return True
+
+    roll = random.random()
+    if roll < 0.70:
+        return spawn_enemy_encounter(random.randint(1, 2))
+    if roll < 0.90:
+        return spawn_enemy_encounter(random.randint(2, 3))
+    return spawn_elite_encounter()
 
 def show_travel_menu():
     """Display available biomes and allow travel."""
@@ -923,6 +1092,8 @@ def show_menu():
     commands.add_row("recipes", "View recipe book")
     commands.add_row("quests / q", "View quest log")
     commands.add_row("status / s", "View player status")
+    commands.add_row("boss / b", "Challenge area boss")
+    commands.add_row("info / area", "View current area details")
     commands.add_row("travel / t", "Move to another biome")
     commands.add_row("save", "Save your progress")
     commands.add_row("help", "Show this menu")
@@ -992,106 +1163,197 @@ def main_loop():
         in_combat = hasattr(player, 'in_combat_with') and len(player.in_combat_with) > 0
         
         if in_combat:
-            # Combat mode - show combat-specific commands
             player_health = player.get_component(HealthComponent)
-            enemy = player.in_combat_with[0]
-            enemy_health = enemy.get_component(HealthComponent)
-            
-            # Create combat panel
-            combat_layout = Table.grid(padding=1)
-            combat_layout.add_column(justify="center")
-            
-            # Player HP bar
-            player_hp_percent = int((player_health.hp / player_health.max_hp) * 100)
-            player_bar = f"[{'green' if player_hp_percent > 50 else 'yellow' if player_hp_percent > 25 else 'red'}]{'█' * (player_hp_percent // 5)}{'░' * (20 - player_hp_percent // 5)}[/]"
-            
-            # Enemy HP bar
-            enemy_hp_percent = int((enemy_health.hp / enemy_health.max_hp) * 100)
-            enemy_bar = f"[{'red' if enemy_hp_percent > 50 else 'dark_red'}]{'█' * (enemy_hp_percent // 5)}{'░' * (20 - enemy_hp_percent // 5)}[/]"
-            
-            combat_layout.add_row(f"[bold cyan]{player.name}[/bold cyan]: {player_bar} {player_health.hp:.1f}/{player_health.max_hp}")
-            combat_layout.add_row(f"[bold red]{enemy.name}[/bold red]: {enemy_bar} {enemy_health.hp:.1f}/{enemy_health.max_hp}")
-            
-            panel = Panel(
-                combat_layout,
-                title="[bold red]⚔️  COMBAT  ⚔️[/bold red]",
-                border_style="red",
-                box=box.HEAVY
-            )
-            console.print(panel)
-            
-            console.print("[bold cyan][a][/] Attack  [bold yellow][d][/] Defend  [bold green][p][/] Potion  [bold white][r][/] Run")
-            
-            command = Prompt.ask(">", choices=["a", "d", "p", "r", "attack", "defend", "potion", "run"], 
-                                show_choices=False).lower()
-            
-            if command in ["a", "attack"]:
-                if combat_system.can_attack(player):
-                    combat_system.attack(player, enemy)
-                    time.sleep(0.5)
-                else:
-                    cooldown_left = combat_system.attack_cooldowns.get(player.id, 0)
-                    console.print(f"[yellow]⏳ Cooldown: {cooldown_left:.1f}s remaining[/yellow]")
-                    time.sleep(0.3)
-            
-            elif command in ["d", "defend"]:
-                combat_system.defend(player)
-                time.sleep(0.4)
-            
-            elif command in ["p", "potion"]:
-                combat_system.use_potion(player)
-                time.sleep(0.5)
-            
-            elif command in ["r", "run"]:
-                player.in_combat_with = []
-                console.print("[yellow]💨 You flee from battle![/yellow]")
-                time.sleep(0.6)
-            
-            # Check for death
+            if not hasattr(player, "current_combat_defeated"):
+                player.current_combat_defeated = []
+
+            # Remove any already-dead enemies first.
+            player.current_combat_defeated.extend(combat_system.remove_dead_combatants(player))
+            living_enemies = combat_system.get_living_enemies(player)
+
+            # Victory resolution when all enemies are down.
+            if not living_enemies:
+                defeated_enemies = getattr(player, "current_combat_defeated", [])
+                if defeated_enemies:
+                    summary = combat_system.distribute_combat_rewards(player, defeated_enemies)
+                    names_joined = ", ".join(summary.get("enemy_names", []))
+                    console.print(f"[bold green]Victory! Defeated {summary.get('enemy_count', 0)} enemies: {names_joined}[/bold green]")
+
+                    loot_bits = []
+                    for item_name, qty in summary.get("items", {}).items():
+                        loot_bits.append(f"{qty}x {item_name}")
+                    if summary.get("gold", 0) > 0:
+                        loot_bits.append(f"{summary.get('gold', 0)} gold")
+                    if summary.get("xp", 0) > 0:
+                        loot_bits.append(f"+{summary.get('xp', 0)} XP")
+                    if loot_bits:
+                        console.print(f"[cyan]Loot:[/cyan] {', '.join(loot_bits)}")
+
+                    if summary.get("leveled", 0) > 0:
+                        console.print(f"[bold magenta]Level Up! +{summary.get('leveled')} level(s).[/bold magenta]")
+
+                    for elite_name in summary.get("new_elites", []):
+                        console.print(f"[bold yellow]Elite defeated! {elite_name} will not respawn.[/bold yellow]")
+
+                    boss_kills = [enemy for enemy in defeated_enemies if isinstance(enemy, Boss)]
+                    for enemy in boss_kills:
+                        if enemy.name not in player.defeated_bosses:
+                            previously_locked = {
+                                biome.name
+                                for biome in world.biomes.values()
+                                if not can_enter_biome(biome)
+                            }
+                            player.defeated_bosses.append(enemy.name)
+                            newly_unlocked = [
+                                biome.name
+                                for biome in world.biomes.values()
+                                if biome.name in previously_locked and can_enter_biome(biome)
+                            ]
+                            for biome_name in newly_unlocked:
+                                console.print(f"[bold green]🗺️ New area unlocked: {biome_name}[/bold green]")
+                                time.sleep(0.4)
+
+                    if boss_kills:
+                        console.print("[dim]Auto-saving...[/dim]")
+                        success, message = save_system.save_game(player, world, slot="autosave")
+                        if not success:
+                            console.print(f"[red]{message}[/red]")
+                        time.sleep(0.4)
+
+                player.current_combat_defeated = []
+                continue
+
+            # Turn start status processing.
+            player_stunned = process_turn_status(player)
+            for enemy in list(living_enemies):
+                process_turn_status(enemy)
+
+            player.current_combat_defeated.extend(combat_system.remove_dead_combatants(player))
+            living_enemies = combat_system.get_living_enemies(player)
+            if not living_enemies:
+                continue
+
             if not player_health.alive:
                 console.print()
-                time.sleep(0.5)
                 typewriter("Your vision fades...", delay=0.06, color="red")
                 time.sleep(0.8)
                 console.print(Panel("[bold red]💀 GAME OVER 💀[/bold red]", border_style="red"))
                 time.sleep(1.0)
                 break
-            
-            if not enemy_health.alive:
+
+            # Combat UI for multi-target encounters.
+            combat_layout = Table.grid(padding=1)
+            combat_layout.add_column(justify="left")
+
+            player_hp_percent = int((player_health.hp / player_health.max_hp) * 100)
+            player_bar = f"[{'green' if player_hp_percent > 50 else 'yellow' if player_hp_percent > 25 else 'red'}]{'█' * (player_hp_percent // 5)}{'░' * (20 - player_hp_percent // 5)}[/]"
+            combat_layout.add_row(f"[bold cyan]YOU[/bold cyan]: {player_bar} {player_health.hp:.1f}/{player_health.max_hp}")
+            combat_layout.add_row(f"Status: {get_effect_badges(player)}")
+            combat_layout.add_row("")
+            combat_layout.add_row("[bold red]ENEMIES:[/bold red]")
+
+            for idx, enemy in enumerate(living_enemies, 1):
+                enemy_health = enemy.get_component(HealthComponent)
+                hp_percent = int((enemy_health.hp / enemy_health.max_hp) * 100)
+                enemy_bar = f"[{'red' if hp_percent > 50 else 'dark_red'}]{'█' * (hp_percent // 5)}{'░' * (20 - hp_percent // 5)}[/]"
+                combat_layout.add_row(f"{idx}. {enemy.name}: {enemy_bar} {enemy_health.hp:.1f}/{enemy_health.max_hp}")
+                combat_layout.add_row(f"   Status: {get_effect_badges(enemy)}")
+
+            panel = Panel(
+                combat_layout,
+                title="[bold red]⚔️  COMBAT  ⚔️[/bold red]",
+                border_style="red",
+                box=box.HEAVY,
+            )
+            console.print(panel)
+
+            player.last_action = "stunned" if player_stunned else "idle"
+            if player_stunned:
+                console.print("[yellow]You are stunned and cannot act this turn![/yellow]")
+                time.sleep(0.5)
+            else:
+                console.print("[bold cyan][a][/] Attack  [bold yellow][d][/] Defend  [bold green][p][/] Potion  [bold white][r][/] Run")
+                command = Prompt.ask(">", choices=["a", "d", "p", "r", "attack", "defend", "potion", "run"], show_choices=False).lower()
+
+                if command in ["a", "attack"]:
+                    player.last_action = "attack"
+                    if not combat_system.can_attack(player):
+                        cooldown_left = combat_system.attack_cooldowns.get(player.id, 0)
+                        console.print(f"[yellow]⏳ Cooldown: {cooldown_left:.1f}s remaining[/yellow]")
+                    else:
+                        target = None
+                        if len(living_enemies) == 1:
+                            target = living_enemies[0]
+                        else:
+                            target_table = Table(title="[bold]Select Target[/bold]", box=box.ROUNDED)
+                            target_table.add_column("No.", style="cyan", justify="center")
+                            target_table.add_column("Enemy", style="white")
+                            target_table.add_column("HP", style="red")
+                            for i, enemy in enumerate(living_enemies, 1):
+                                enemy_health = enemy.get_component(HealthComponent)
+                                target_table.add_row(str(i), enemy.name, f"{enemy_health.hp:.1f}/{enemy_health.max_hp}")
+                            console.print(target_table)
+                            target_choice = IntPrompt.ask(">", default=1)
+                            if 1 <= target_choice <= len(living_enemies):
+                                target = living_enemies[target_choice - 1]
+                            else:
+                                console.print("[yellow]Invalid target selection.[/yellow]")
+
+                        if target:
+                            combat_system.attack(player, target)
+
+                elif command in ["d", "defend"]:
+                    player.last_action = "defend"
+                    combat_system.defend(player)
+
+                elif command in ["p", "potion"]:
+                    player.last_action = "potion"
+                    combat_system.use_potion(player)
+
+                elif command in ["r", "run"]:
+                    player.last_action = "run"
+                    # Optional partial rewards for enemies defeated before fleeing.
+                    partial_defeated = getattr(player, "current_combat_defeated", [])
+                    if partial_defeated:
+                        summary = combat_system.distribute_combat_rewards(player, partial_defeated)
+                        console.print(f"[dim]You fled, but kept spoils from defeated foes (+{summary.get('xp', 0)} XP, +{summary.get('gold', 0)} gold).[/dim]")
+                    for enemy in list(living_enemies):
+                        if hasattr(enemy, "in_combat_with") and player in enemy.in_combat_with:
+                            enemy.in_combat_with.remove(player)
+                    player.in_combat_with = []
+                    player.current_combat_defeated = []
+                    console.print("[yellow]💨 You flee from battle![/yellow]")
+                    time.sleep(0.6)
+                    continue
+
+            # Clean dead enemies after player action.
+            player.current_combat_defeated.extend(combat_system.remove_dead_combatants(player))
+            living_enemies = combat_system.get_living_enemies(player)
+            if not living_enemies:
+                continue
+
+            # Enemy turn.
+            combat_state = {
+                "enemies": living_enemies,
+                "player_last_action": getattr(player, "last_action", "idle"),
+            }
+            for enemy in list(living_enemies):
+                if not player_health.alive:
+                    break
+                logs = enemy_ai_controller.execute_pattern(enemy, player, combat_state)
+                for log_line in logs:
+                    console.print(f"[red]{log_line}[/red]")
+                    time.sleep(0.15)
+
+            player.current_combat_defeated.extend(combat_system.remove_dead_combatants(player))
+
+            if not player_health.alive:
                 console.print()
-                time.sleep(0.5)
-                typewriter(f"🏆 {enemy.name} falls before you!", delay=0.04, color="bold green")
+                typewriter("Your vision fades...", delay=0.06, color="red")
+                time.sleep(0.8)
+                console.print(Panel("[bold red]💀 GAME OVER 💀[/bold red]", border_style="red"))
                 time.sleep(1.0)
-                
-                # Boss death dialogue
-                if hasattr(enemy, 'dialogue') and 'death' in enemy.dialogue:
-                    console.print()
-                    typewriter(f'"{enemy.dialogue["death"]}"', delay=0.035, color="dim red")
-                    time.sleep(1.0)
-
-                if isinstance(enemy, Boss) and enemy.name not in player.defeated_bosses:
-                    previously_locked = {
-                        biome.name
-                        for biome in world.biomes.values()
-                        if not can_enter_biome(biome)
-                    }
-                    player.defeated_bosses.append(enemy.name)
-                    newly_unlocked = [
-                        biome.name
-                        for biome in world.biomes.values()
-                        if biome.name in previously_locked and can_enter_biome(biome)
-                    ]
-                    for biome_name in newly_unlocked:
-                        console.print(f"[bold green]🗺️ New area unlocked: {biome_name}[/bold green]")
-                        time.sleep(0.5)
-
-                console.print("[dim]Auto-saving...[/dim]")
-                success, message = save_system.save_game(player, world, slot="autosave")
-                if not success:
-                    console.print(f"[red]{message}[/red]")
-                time.sleep(0.5)
-                
-                player.in_combat_with = []
+                break
         
         else:
             # Exploration mode - normal commands
@@ -1133,6 +1395,12 @@ def main_loop():
             
             elif command == "status" or command == "s":
                 show_status()
+
+            elif command == "boss" or command == "b" or command == "challenge":
+                boss_encounter()
+
+            elif command == "info" or command == "area":
+                show_biome_info()
             
             elif command == "quit" or command == "exit":
                 console.print("\n[yellow]Are you sure you want to quit?[/yellow]")
